@@ -1,0 +1,26 @@
+[package]
+name = "bfk6-fw"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "bfk6-fw"
+test = false
+bench = false
+
+[dependencies]
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
+panic-halt = "0.2"
+kd32f328-pac = { path = "../kd32f328-pac" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+debug = true
+panic = "abort"
+
+[profile.dev]
+opt-level = "z"
+panic = "abort"
