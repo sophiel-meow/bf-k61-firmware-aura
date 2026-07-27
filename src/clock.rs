@@ -24,8 +24,17 @@ pub fn setup_pll(rcc: &rcc::RegisterBlock, flash: &flash::RegisterBlock) {
 }
 
 pub fn enable_peripheral_clocks(rcc: &rcc::RegisterBlock) {
-    rcc.ahbenr()
-        .modify(|_, w| w.iopaen().set_bit().iopben().set_bit());
+    rcc.ahbenr().modify(|_, w| {
+        w.iopaen()
+            .set_bit()
+            .iopben()
+            .set_bit()
+            .iopcen()
+            .set_bit()
+            .iopfen()
+            .set_bit()
+    });
     rcc.apb2enr().modify(|_, w| w.usart1en().set_bit());
+    rcc.apb1enr().modify(|_, w| w.spi2en().set_bit());
 }
 
