@@ -39,6 +39,9 @@ pub struct Radio<'a> {
     /// register, so it's tracked and driven from here.
     audio_open: bool,
     sq_debounce: u8,
+
+    rssi_open: bool,
+    rssi_debounce: u8,
 }
 
 impl<'a> Radio<'a> {
@@ -48,7 +51,16 @@ impl<'a> Radio<'a> {
         gpiob: &'a gpiof::RegisterBlock,
         cfg: ChannelConfig,
     ) -> Self {
-        Radio { fd6818, gpioa, gpiob, cfg, audio_open: false, sq_debounce: 0 }
+        Radio {
+            fd6818,
+            gpioa,
+            gpiob,
+            cfg,
+            audio_open: false,
+            sq_debounce: 0,
+            rssi_open: false,
+            rssi_debounce: 0,
+        }
     }
 
     pub fn init(&mut self, syst: &mut SYST) {
@@ -97,11 +109,24 @@ impl<'a> Radio<'a> {
         if self.audio_open && self.fd6818.tail_detected(syst) {
             self.audio_open = false;
             self.sq_debounce = 0;
-            self.fd6818.set_af_out(syst, AfOutState::Mute, self.cfg.wide_band);
+            self.fd6818
+                .set_af_out(syst, AfOutState::Mute, self.cfg.wide_band);
             return false;
         }
 
         let rssi_open = self.fd6818.squelch_open(syst);
+
+        if rssi_open != self.rssi_open {
+            self.rssi_debounce += 1;
+            if self.rssi_debounce >= debounce_ticks {
+                self.rssi_open = rssi_open;
+                self.rssi_debounce = 0;
+                board::set_rx_led(self.gpioa, self.rssi_open);
+            }
+        } else {
+            self.rssi_debounce = 0;
+        }
+
         let tone_ok = match self.cfg.subaudio_rx {
             SubAudio::None => true,
             SubAudio::Ctcss(_) => self.fd6818.subaudio_matched(syst),
@@ -112,7 +137,11 @@ impl<'a> Radio<'a> {
             if self.sq_debounce >= debounce_ticks {
                 self.audio_open = open;
                 self.sq_debounce = 0;
-                let state = if open { AfOutState::RxAudio } else { AfOutState::Mute };
+                let state = if open {
+                    AfOutState::RxAudio
+                } else {
+                    AfOutState::Mute
+                };
                 self.fd6818.set_af_out(syst, state, self.cfg.wide_band);
             }
         } else {
@@ -131,7 +160,8 @@ impl<'a> Radio<'a> {
         self.fd6818.set_scramble_off(syst);
         self.fd6818.set_frequency_hz(syst, self.cfg.freq_hz);
         self.fd6818.set_wide_bandwidth(syst, self.cfg.wide_band);
-        self.fd6818.set_squelch_level(syst, self.cfg.freq_hz, self.cfg.sql_level);
+        self.fd6818
+            .set_squelch_level(syst, self.cfg.freq_hz, self.cfg.sql_level);
         self.fd6818.enable_rx_subaudio(syst, self.cfg.subaudio_rx);
         self.fd6818.rx_on(syst);
 
@@ -139,9 +169,14 @@ impl<'a> Radio<'a> {
         // REG 0x78's sq_out flag has had a chance to settle at the new
         // frequency/threshold instead of momentarily passing through
         // whatever the chip read right at retune.
-        self.fd6818.set_af_out(syst, AfOutState::Mute, self.cfg.wide_band);
+        self.fd6818
+            .set_af_out(syst, AfOutState::Mute, self.cfg.wide_band);
         self.audio_open = false;
         self.sq_debounce = 0;
+        self.rssi_open = false;
+        self.rssi_debounce = 0;
+        board::set_rx_led(self.gpioa, false);
+        self.fd6818.set_tx_led(syst, false);
         match self.band() {
             Band::Uhf => board::set_rx_band_uhf(self.gpioa),
             Band::Vhf => board::set_rx_band_vhf(self.gpioa),
@@ -166,6 +201,7 @@ impl<'a> Radio<'a> {
             Band::Uhf => self.fd6818.set_tx_band_uhf(syst),
             Band::Vhf => self.fd6818.set_tx_band_vhf(syst),
         }
+        self.fd6818.set_tx_led(syst, true);
     }
 
     pub fn end_tx(&mut self, syst: &mut SYST) {

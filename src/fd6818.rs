@@ -25,8 +25,8 @@ const REG_BANDWIDTH: u8 = 0x43;
 /// | [1]     | txon                                         |
 /// | [0]     | rxon                                         |
 ///
-const STATE_RX_ON: u16 = 0xBFF1;    // 1 0 1111 1 11111 0001
-const STATE_TX_ON: u16 = 0xC1FE;    // 1 1 0000 0 11111 1110
+const STATE_RX_ON: u16 = 0xBFF1; // 1 0 1111 1 11111 0001
+const STATE_TX_ON: u16 = 0xC1FE; // 1 1 0000 0 11111 1110
 
 const BANDWIDTH_WIDE: u16 = 0x3028;
 const BANDWIDTH_NARROW: u16 = 0x4048;
@@ -92,6 +92,8 @@ const SQL_OFFSET_V_200: [u8; 16] = [0; 16];
 const REG_GPIO: u8 = 0x33;
 const GPIO2: u16 = 0x0004;
 const GPIO3: u16 = 0x0008;
+/// GPIO5 drives the red TX indicator LED (R_LED)
+const GPIO5: u16 = 0x0020;
 
 /// REG 0x36: PA enable/gain register. REG_28H in Datasheet.
 ///
@@ -131,8 +133,8 @@ const PA_TABLE_BASE: [u32; 3] = [0xF000, 0xF040, 0xF080]; // High, Mid, Low
 /// 4 bits of each write and the coefficient itself into the low 12 bits.
 const REG_DTMF_COEF: u8 = 0x09;
 const DTMF_COEF_TABLE: [u16; 16] = [
-    0x006F, 0x106B, 0x2067, 0x3062, 0x4050, 0x5047, 0x603A, 0x702C, 0x8041, 0x9037, 0xA025,
-    0xB017, 0xC0E4, 0xD0CB, 0xE0B5, 0xF09F,
+    0x006F, 0x106B, 0x2067, 0x3062, 0x4050, 0x5047, 0x603A, 0x702C, 0x8041, 0x9037, 0xA025, 0xB017,
+    0xC0E4, 0xD0CB, 0xE0B5, 0xF09F,
 ];
 
 const REG_FSK_BAUD: u8 = 0x72;
@@ -274,6 +276,11 @@ impl<'a> Fd6818<'a> {
         self.set_gpio_bit(syst, GPIO3, true);
     }
 
+    /// Red TX indicator LED
+    pub fn set_tx_led(&mut self, syst: &mut SYST, on: bool) {
+        self.set_gpio_bit(syst, GPIO5, on);
+    }
+
     /// Enables the PA stage at the calibrated APC target for `power`,
     /// pairing it with that level's driver gain
     pub fn pa_enable(&mut self, syst: &mut SYST, power: Power) {
@@ -331,7 +338,11 @@ impl<'a> Fd6818<'a> {
         let vol_reg = if state == AfOutState::Beep {
             AF_OUT_BEEP_VOLUME
         } else {
-            let vol = (if wide { self.vol_wideband } else { self.vol_narrowband } & 0x3F) as u16;
+            let vol = (if wide {
+                self.vol_wideband
+            } else {
+                self.vol_narrowband
+            } & 0x3F) as u16;
             0x8000 | (vol << 4) | DAC_GAIN
         };
         self.write_reg(syst, REG_VOLUME, vol_reg);
@@ -589,7 +600,11 @@ impl<'a> Fd6818<'a> {
     }
 
     pub fn set_wide_bandwidth(&mut self, syst: &mut SYST, wide: bool) {
-        let value = if wide { BANDWIDTH_WIDE } else { BANDWIDTH_NARROW };
+        let value = if wide {
+            BANDWIDTH_WIDE
+        } else {
+            BANDWIDTH_NARROW
+        };
         self.write_reg(syst, REG_BANDWIDTH, value);
     }
 
