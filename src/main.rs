@@ -19,6 +19,7 @@ mod clock;
 mod debounce;
 mod delay;
 mod display_spec;
+mod fd6818;
 mod hal_shim;
 mod spi;
 mod uart;
@@ -49,6 +50,7 @@ fn main() -> ! {
     board::init_lcd_spi_pins(gpiob);
     board::init_lcd_backlight_pin(gpiof);
     board::set_lcd_backlight(gpiof, true);
+    board::init_fd6818_pins(gpiob);
 
     let mut dbg = uart::DebugUart::new(usart1, clock::SYSCLK_HZ, 115_200);
     writeln!(dbg, "bfk6-fw boot, sysclk={}Hz", clock::SYSCLK_HZ).ok();
@@ -86,6 +88,21 @@ fn main() -> ! {
         .ok();
 
     lcd.flush().ok();
+
+    let mut rfic = fd6818::Fd6818::new(gpiob);
+    let scratch_addr = 0x71;
+    let scratch_value = 0xA5A5u16;
+    rfic.write_reg(&mut cp.SYST, scratch_addr, scratch_value);
+    let readback = rfic.read_reg(&mut cp.SYST, scratch_addr);
+    writeln!(
+        dbg,
+        "fd6818 scratch reg 0x{:02x}: wrote {:#06x}, read back {:#06x}, {}",
+        scratch_addr,
+        scratch_value,
+        readback,
+        if readback == scratch_value { "OK" } else { "MISMATCH" }
+    )
+    .ok();
 
     let mut debouncer = Debouncer::new(board::read_ptt(gpioa));
     let mut light_on = false;

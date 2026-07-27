@@ -110,3 +110,57 @@ pub fn set_lcd_backlight(gpiof: &gpiof::RegisterBlock, on: bool) {
 }
 
 
+
+// FD6818 SCN=PB3, SCK=PB5, SDA=PB6(bi)
+pub fn init_fd6818_pins(gpiob: &gpiof::RegisterBlock) {
+    gpiob
+        .otyper()
+        .modify(|_, w| w.ot3().clear_bit().ot5().clear_bit().ot6().clear_bit());
+    gpiob.ospeedr().modify(|_, w| unsafe {
+        w.ospeedr3().bits(0b11).ospeedr5().bits(0b11).ospeedr6().bits(0b11)
+    });
+    gpiob
+        .pupdr()
+        .modify(|_, w| unsafe { w.pupdr3().bits(0b00).pupdr5().bits(0b00).pupdr6().bits(0b01) });
+    gpiob.moder().modify(|_, w| unsafe {
+        w.moder3().bits(0b01).moder5().bits(0b01).moder6().bits(0b01)
+    });
+}
+
+pub fn set_fd6818_scn(gpiob: &gpiof::RegisterBlock, high: bool) {
+    if high {
+        gpiob.bsrr().write(|w| w.bs3().set_bit());
+    } else {
+        gpiob.brr().write(|w| w.br3().set_bit());
+    }
+}
+
+pub fn set_fd6818_sck(gpiob: &gpiof::RegisterBlock, high: bool) {
+    if high {
+        gpiob.bsrr().write(|w| w.bs5().set_bit());
+    } else {
+        gpiob.brr().write(|w| w.br5().set_bit());
+    }
+}
+
+pub fn set_fd6818_sda(gpiob: &gpiof::RegisterBlock, high: bool) {
+    if high {
+        gpiob.bsrr().write(|w| w.bs6().set_bit());
+    } else {
+        gpiob.brr().write(|w| w.br6().set_bit());
+    }
+}
+
+pub fn set_fd6818_sda_input(gpiob: &gpiof::RegisterBlock) {
+    gpiob.moder().modify(|_, w| unsafe { w.moder6().bits(0b00) });
+}
+
+pub fn set_fd6818_sda_output(gpiob: &gpiof::RegisterBlock) {
+    gpiob.moder().modify(|_, w| unsafe { w.moder6().bits(0b01) });
+}
+
+pub fn read_fd6818_sda(gpiob: &gpiof::RegisterBlock) -> bool {
+    gpiob.idr().read().idr6().bit_is_set()
+}
+
+
