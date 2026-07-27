@@ -56,6 +56,35 @@ const REG_UNKNOWN_2A: u8 = 0x2A;
 const REG_UNKNOWN_21: u8 = 0x21;
 const REG_SCRAMBLE: u8 = 0x31;
 const REG_CTCSS: u8 = 0x51;
+/// "CTCSS0" tone bank (the one actually transmitted/decoded); [13]=1
+/// selects a second bank always held at the fixed 55.1Hz tail-elimination
+const REG_SUBAUDIO_FREQ: u8 = 0x07;
+const REG_SUBAUDIO_THRESH: u8 = 0x52;
+const SUBAUDIO_THRESH_VALUE: u16 = 0x0292;
+/// REG 0x78: RSSI-based squelch threshold, 0.5dB/step.
+/// [15:8] rssi_sq_th_in (squelch opens), [7:0] rssi_sq_th_out (squelch closes).
+const REG_SQUELCH: u8 = 0x78;
+const REG_STATUS: u8 = 0x0C;
+const STATUS_SQ_OPEN: u16 = 0x0002;
+const STATUS_SUBAUDIO_MATCH: u16 = 0x0400;
+const STATUS_TAIL_DETECTED: u16 = 0x0800;
+
+const SUBAUDIO_TAIL_WORD: u16 = 0x01CD | 0x2000;
+/// REG 0x07 **bank0** (bit13=0), same 55.1Hz tone as the bank1 constant
+/// above but written to the other bank: `send_tail()` briefly overwrites
+/// whatever the channel's own CTCSS tone was with this, rather than
+/// running a second tone alongside it.
+const SEND_TAIL_WORD: u16 = 0x0471;
+
+/// Squelch-level base RSSI thresholds, index = squelch level 0..9 (0 =
+/// always open).
+const SQL_TH_IN: [u8; 10] = [0, 89, 91, 93, 95, 97, 99, 102, 105, 107];
+/// lower than SQL_TH_IN for closing to prevent chattering
+const SQL_TH_OUT: [u8; 10] = [0, 87, 89, 91, 93, 95, 97, 99, 102, 105];
+
+const SQL_OFFSET_U_400: [u8; 16] = [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 0, 0, 0];
+const SQL_OFFSET_V_136: [u8; 10] = [4, 4, 4, 4, 4, 4, 4, 4, 2, 2];
+const SQL_OFFSET_V_200: [u8; 16] = [0; 16];
 
 /// REG 0x33: chip-internal GPIO used to steer the PA driver between the
 /// VHF and UHF output paths. bits[15:8] = output-enable-bar (active low,
@@ -80,12 +109,21 @@ const PA_OFF_VALUE: u16 = 0x007F;
 /// PACTL on, `padrv_gain` = 7, `pa_gain_vreg` = 7 — max driver gain
 /// (datasheet's power table: 8.33dB). Used for the high and mid power
 /// levels, where the level itself is set purely by the APC target.
-#[allow(dead_code)]
 const PA_GAIN_HIGH: u16 = 0x00FF;
 /// PACTL on, `padrv_gain` = 2, `pa_gain_vreg` = 7 — 5.69dB, i.e. 2.6dB
 /// below max drive. This is what the original pairs with the low-power APC
 /// table; low power is the one level that backs off the driver itself.
 const PA_GAIN_LOW: u16 = 0x00D7;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Power {
+    Low,
+    Mid,
+    High,
+}
+
+/// Flash base address of each power level's APC target table
+const PA_TABLE_BASE: [u32; 3] = [0xF000, 0xF040, 0xF080]; // High, Mid, Low
 
 /// DTMF Goertzel-style coefficient table.
 /// Same physical register (0x09) is
@@ -139,6 +177,13 @@ pub enum AfOutState {
     FskTest,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SubAudio {
+    None,
+    /// Analog CTCSS tone, in tenths of Hz (e.g. `1000` = 100.0Hz).
+    Ctcss(u16),
+}
+
 /// 26 MHz xtal calibration table
 /// The index is derived from the XTAL_ADJUST byte in spi flash
 /// Entry 8 corresponds to the nominal frequency (no correction)
@@ -160,7 +205,8 @@ pub struct Fd6818<'a> {
     vol_wideband: u8,
     vol_narrowband: u8,
     mic_mod_depth: u8,
-    pa_target_low: u8,
+    cts_mod_depth: u8,
+    pa_target: u8,
 }
 
 impl<'a> Fd6818<'a> {
@@ -171,7 +217,8 @@ impl<'a> Fd6818<'a> {
             vol_wideband: 25,
             vol_narrowband: 25,
             mic_mod_depth: 0,
-            pa_target_low: 100,
+            cts_mod_depth: 0,
+            pa_target: 100,
         }
     }
 
@@ -180,27 +227,28 @@ impl<'a> Fd6818<'a> {
         self.xtal_adjust = value;
     }
 
-    /// Flash address holding the calibrated low-power PA/APC target byte
-    /// for `freq_hz`.
+    /// Flash address holding the calibrated APC target byte for `freq_hz`
+    /// at the given power level.
     /// Only U_400/V_136/V_200 bands are actually calibrated
-    pub fn pa_target_low_addr(freq_hz: u32) -> Option<u32> {
+    pub fn pa_target_addr(freq_hz: u32, power: Power) -> Option<u32> {
+        let base = PA_TABLE_BASE[power as usize];
         let mhz = freq_hz / 1_000_000;
         if freq_hz >= 400_000_000 {
-            Some(0xF080 + (mhz - 400) / 10)
+            Some(base + (mhz - 400) / 10)
         } else if freq_hz >= 200_000_000 {
-            Some(0xF0A0 + (mhz - 200) / 5)
+            Some(base + 0x20 + (mhz - 200) / 5)
         } else if freq_hz >= 130_000_000 {
             let idx = ((mhz - 130) / 3).min(15);
-            Some(0xF090 + idx)
+            Some(base + 0x10 + idx)
         } else {
             None
         }
     }
 
-    /// Calibrated low-power APC target byte, read from flash at the
-    /// address `pa_target_low_addr()` gives for the current frequency.
-    pub fn set_pa_calibration(&mut self, target_low: u8) {
-        self.pa_target_low = target_low;
+    /// Calibrated APC target byte, read from flash at the address
+    /// `pa_target_addr()` gives for the current frequency and power level.
+    pub fn set_pa_calibration(&mut self, target: u8) {
+        self.pa_target = target;
     }
 
     fn set_gpio_bit(&mut self, syst: &mut SYST, gpiox: u16, high: bool) {
@@ -226,8 +274,14 @@ impl<'a> Fd6818<'a> {
         self.set_gpio_bit(syst, GPIO3, true);
     }
 
-    pub fn pa_enable_low_power(&mut self, syst: &mut SYST) {
-        let value = ((self.pa_target_low as u16) << 8) | PA_GAIN_LOW;
+    /// Enables the PA stage at the calibrated APC target for `power`,
+    /// pairing it with that level's driver gain
+    pub fn pa_enable(&mut self, syst: &mut SYST, power: Power) {
+        let gain = match power {
+            Power::Low => PA_GAIN_LOW,
+            Power::Mid | Power::High => PA_GAIN_HIGH,
+        };
+        let value = ((self.pa_target as u16) << 8) | gain;
         self.write_reg(syst, REG_PA, value);
     }
 
@@ -244,11 +298,18 @@ impl<'a> Fd6818<'a> {
         self.set_gpio_bit(syst, GPIO3, false);
     }
 
-    /// Calibration bytes from the flash block at 0xF210: offset 0 is mic
-    /// modulation depth, offset 3/4 are wideband/narrowband AF volume
-    /// (max 31 each). Used by `apply_tx_mic_gain()` and `set_af_out()`.
-    pub fn set_audio_calibration(&mut self, mic_mod_depth: u8, vol_wideband: u8, vol_narrowband: u8) {
+    /// Calibration bytes from the flash block at 0xF210 : offset 0 is mic
+    /// modulation depth, offset 1 is CTCSS modulation depth, offsets 3/4 are
+    /// wideband/narrowband AF volume (max 31 each).
+    pub fn set_audio_calibration(
+        &mut self,
+        mic_mod_depth: u8,
+        cts_mod_depth: u8,
+        vol_wideband: u8,
+        vol_narrowband: u8,
+    ) {
         self.mic_mod_depth = mic_mod_depth;
+        self.cts_mod_depth = cts_mod_depth;
         self.vol_wideband = vol_wideband;
         self.vol_narrowband = vol_narrowband;
     }
@@ -281,8 +342,89 @@ impl<'a> Fd6818<'a> {
         self.write_reg(syst, REG_MIC_SENS, (MIC_SENS_VALUE & 0xFFE0) | gain);
     }
 
-    /// TODO: REG 0x51 = 0: CTCSS/DCS subaudio tone generator
-    pub fn disable_subaudio_tx(&mut self, syst: &mut SYST) {self.write_reg(syst, REG_CTCSS, 0x0000);
+    /// Configures the transmitted sub-audible tone
+    ///
+    /// `REG_CTCSS` (0x51): bit15 `subau_en`, bit12 `ctc_dcs_sel` (1=CTCSS),
+    /// bits[6:0] `subau_gain`
+    /// TODO: DCS
+    pub fn set_subaudio_tx(&mut self, syst: &mut SYST, sub: SubAudio) {
+        match sub {
+            SubAudio::None => {
+                self.write_reg(syst, REG_CTCSS, 0x0000);
+            }
+            SubAudio::Ctcss(tenths_hz) => {
+                let gain = (self.cts_mod_depth & 0x7F) as u16;
+                self.write_reg(syst, REG_CTCSS, 0x9000 | gain);
+                // datasheet: ctc_freq = freq_Hz * 2^27/6500000; tenths_hz
+                // is freq*10, so this is (tenths_hz/10)*20.6489 rearranged
+                // to avoid the intermediate fraction.
+                let word = ((tenths_hz as u32 * 206_489) / 100_000) as u16;
+                self.write_reg(syst, REG_SUBAUDIO_FREQ, word & 0x1FFF);
+
+                self.write_reg(syst, REG_SUBAUDIO_FREQ, SUBAUDIO_TAIL_WORD);
+                self.write_reg(syst, REG_SUBAUDIO_THRESH, SUBAUDIO_THRESH_VALUE);
+            }
+        }
+    }
+
+    pub fn send_tail(&mut self, syst: &mut SYST, on: bool) {
+        if on {
+            let gain = (self.cts_mod_depth & 0x7F) as u16;
+            self.write_reg(syst, REG_CTCSS, 0x9000 | gain);
+            self.write_reg(syst, REG_SUBAUDIO_FREQ, SEND_TAIL_WORD);
+        } else {
+            self.write_reg(syst, REG_CTCSS, 0x0000);
+        }
+    }
+
+    pub fn enable_rx_subaudio(&mut self, syst: &mut SYST, sub: SubAudio) {
+        let primary_tenths_hz = match sub {
+            SubAudio::Ctcss(tenths_hz) => tenths_hz,
+            SubAudio::None => 551, // 55.1Hz — same as the fixed tail tone
+        };
+        let gain = (self.cts_mod_depth & 0x7F) as u16;
+        self.write_reg(syst, REG_CTCSS, 0x9000 | gain);
+        let primary_word = ((primary_tenths_hz as u32 * 206_489) / 100_000) as u16;
+        self.write_reg(syst, REG_SUBAUDIO_FREQ, primary_word & 0x1FFF);
+        self.write_reg(syst, REG_SUBAUDIO_FREQ, SUBAUDIO_TAIL_WORD);
+        self.write_reg(syst, REG_SUBAUDIO_THRESH, SUBAUDIO_THRESH_VALUE);
+    }
+
+    pub fn tail_detected(&mut self, syst: &mut SYST) -> bool {
+        self.read_reg(syst, REG_STATUS) & STATUS_TAIL_DETECTED != 0
+    }
+
+    pub fn subaudio_matched(&mut self, syst: &mut SYST) -> bool {
+        self.read_reg(syst, REG_STATUS) & STATUS_SUBAUDIO_MATCH != 0
+    }
+
+    pub fn set_squelch_level(&mut self, syst: &mut SYST, freq_hz: u32, level: u8) {
+        let level = (level as usize).min(SQL_TH_IN.len() - 1);
+        let offset = Self::squelch_offset(freq_hz);
+        let th_in = SQL_TH_IN[level].saturating_sub(offset);
+        let th_out = SQL_TH_OUT[level].saturating_sub(offset);
+        self.write_reg(syst, REG_SQUELCH, ((th_in as u16) << 8) | th_out as u16);
+    }
+
+    fn squelch_offset(freq_hz: u32) -> u8 {
+        let mhz = freq_hz / 1_000_000;
+        if freq_hz >= 400_000_000 {
+            let idx = (((mhz - 400) / 10) as usize).min(SQL_OFFSET_U_400.len() - 1);
+            SQL_OFFSET_U_400[idx]
+        } else if freq_hz >= 200_000_000 {
+            let idx = (((mhz - 200) / 5) as usize).min(SQL_OFFSET_V_200.len() - 1);
+            SQL_OFFSET_V_200[idx]
+        } else if freq_hz >= 130_000_000 {
+            let idx = (((mhz - 130) / 5) as usize).min(SQL_OFFSET_V_136.len() - 1);
+            SQL_OFFSET_V_136[idx]
+        } else {
+            0
+        }
+    }
+
+    /// REG 0x0C bit1 (`sq_out`, read-only): true while squelch is open.
+    pub fn squelch_open(&mut self, syst: &mut SYST) -> bool {
+        self.read_reg(syst, REG_STATUS) & STATUS_SQ_OPEN != 0
     }
 
     pub fn wake(&mut self, syst: &mut SYST) {

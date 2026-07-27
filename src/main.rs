@@ -22,13 +22,14 @@ mod display_spec;
 mod fd6818;
 mod hal_shim;
 mod norflash;
+mod radio;
 mod spi;
 mod uart;
 
 use debounce::Debouncer;
 use hal_shim::{ClosurePin, SystDelay};
 
-const TEST_FREQ_HZ: u32 = 438_500_000;
+const TEST_FREQ_HZ: u32 = 439_500_000;
 
 fn checksum32(buf: &[u8]) -> u32 {
     buf.iter().fold(0u32, |acc, &b| acc.wrapping_add(b as u32))
@@ -154,40 +155,39 @@ fn main() -> ! {
     rfic.set_xtal_adjust(xtal_adjust);
     writeln!(dbg, "xtal_adjust = {}", xtal_adjust).ok();
 
-    // cal_buf layout (RF_MODULATION_ADDR block): [0]=mic mod depth,
-    // [3]/[4]=wideband/narrowband AF volume, [11..14]=RX/TX 300Hz/3kHz
-    // response trim steps.
-    rfic.set_audio_calibration(cal_buf[0], cal_buf[3], cal_buf[4]);
+    rfic.set_audio_calibration(cal_buf[0], cal_buf[1], cal_buf[3], cal_buf[4]);
     rfic.apply_af_calibration(&mut cp.SYST, cal_buf[11], cal_buf[12], cal_buf[13], cal_buf[14]);
     writeln!(
         dbg,
-        "audio cal: mic_depth={} vol_wide={} vol_narrow={} af_rx=({},{}) af_tx=({},{})",
-        cal_buf[0], cal_buf[3], cal_buf[4], cal_buf[11], cal_buf[12], cal_buf[13], cal_buf[14]
+        "audio cal: mic_depth={} cts_depth={} vol_wide={} vol_narrow={} af_rx=({},{}) af_tx=({},{})",
+        cal_buf[0], cal_buf[1], cal_buf[3], cal_buf[4], cal_buf[11], cal_buf[12], cal_buf[13], cal_buf[14]
     )
     .ok();
 
-    if let Some(pa_addr) = fd6818::Fd6818::pa_target_low_addr(TEST_FREQ_HZ) {
+    const TEST_POWER: fd6818::Power = fd6818::Power::Low;
+    if let Some(pa_addr) = fd6818::Fd6818::pa_target_addr(TEST_FREQ_HZ, TEST_POWER) {
         let mut pa_byte = [0u8; 1];
         norflash.read_bytes(pa_addr, &mut pa_byte);
         rfic.set_pa_calibration(pa_byte[0]);
-        writeln!(
-            dbg,
-            "pa_target_low @0x{:04x} = {}",
-            pa_addr, pa_byte[0]
-        )
-        .ok();
+        writeln!(dbg, "pa_target @0x{:04x} = {}", pa_addr, pa_byte[0]).ok();
     }
 
-    // idle to ensure state
-    rfic.idle(&mut cp.SYST);
-    rfic.pa_off(&mut cp.SYST);
-    rfic.set_scramble_off(&mut cp.SYST);
-    rfic.set_frequency_hz(&mut cp.SYST, TEST_FREQ_HZ);
-    rfic.set_wide_bandwidth(&mut cp.SYST, true);
-    rfic.rx_on(&mut cp.SYST);
-    rfic.set_af_out(&mut cp.SYST, fd6818::AfOutState::RxAudio, true);
-    board::set_rx_band_uhf(gpioa);
-    board::set_speaker_switch(gpiob, true);
+    let mut radio = radio::Radio::new(
+        rfic,
+        gpioa,
+        gpiob,
+        radio::ChannelConfig {
+            freq_hz: TEST_FREQ_HZ,
+            wide_band: true,
+            power: TEST_POWER,
+            sql_level: 1,
+            subaudio_tx: fd6818::SubAudio::None,
+            subaudio_rx: fd6818::SubAudio::Ctcss(885),
+            tail_elimination: true,
+        },
+    );
+
+    radio.enter_rx(&mut cp.SYST);
     writeln!(dbg, "RX ON  @ {} Hz, watching RSSI...", TEST_FREQ_HZ).ok();
 
     let mut debouncer = Debouncer::new(board::read_ptt(gpioa));
@@ -198,30 +198,16 @@ fn main() -> ! {
         if let Some(level) = debouncer.sample(board::read_ptt(gpioa)) {
             if !level {
                 transmitting = true;
-                // call RfOff() before TX
-                // MUST SET SPEAKER OFF TO MAKE MIC WORK
-                board::set_speaker_switch(gpiob, false);
-
-                rfic.rf_off(&mut cp.SYST);
-                board::set_rx_band_off(gpioa);
-                rfic.idle(&mut cp.SYST);
-                rfic.wake(&mut cp.SYST);
-                rfic.set_frequency_hz(&mut cp.SYST, TEST_FREQ_HZ);
-                rfic.set_wide_bandwidth(&mut cp.SYST, true);
-                rfic.disable_subaudio_tx(&mut cp.SYST);
-                rfic.set_scramble_off(&mut cp.SYST);
-                rfic.apply_tx_mic_gain(&mut cp.SYST);
-                rfic.tx_on(&mut cp.SYST);
-                rfic.pa_enable_low_power(&mut cp.SYST);
-                rfic.set_tx_band_uhf(&mut cp.SYST);
+                radio.enter_tx(&mut cp.SYST);
                 // board::set_flashlight_led(gpiob, true);
                 writeln!(dbg, "TX ON  @ {} Hz (low power)", TEST_FREQ_HZ).ok();
 
-                let r7d = rfic.read_reg(&mut cp.SYST, 0x7D);
-                let r40 = rfic.read_reg(&mut cp.SYST, 0x40);
-                let r30 = rfic.read_reg(&mut cp.SYST, 0x30);
-                let r36 = rfic.read_reg(&mut cp.SYST, 0x36);
-                let r19 = rfic.read_reg(&mut cp.SYST, 0x19);
+                let fd = radio.fd6818_mut();
+                let r7d = fd.read_reg(&mut cp.SYST, 0x7D);
+                let r40 = fd.read_reg(&mut cp.SYST, 0x40);
+                let r30 = fd.read_reg(&mut cp.SYST, 0x30);
+                let r36 = fd.read_reg(&mut cp.SYST, 0x36);
+                let r19 = fd.read_reg(&mut cp.SYST, 0x19);
                 writeln!(
                     dbg,
                     "regs: 0x7D={:#06x} 0x40={:#06x} 0x30={:#06x} 0x36={:#06x} 0x19={:#06x}",
@@ -264,27 +250,21 @@ fn main() -> ! {
                 lcd.flush().ok();
             } else {
                 transmitting = false;
-                rfic.pa_off(&mut cp.SYST);
-                rfic.idle(&mut cp.SYST);
-                rfic.wake(&mut cp.SYST);
-                rfic.set_scramble_off(&mut cp.SYST);
-                rfic.set_frequency_hz(&mut cp.SYST, TEST_FREQ_HZ);
-                rfic.set_wide_bandwidth(&mut cp.SYST, true);
-                rfic.rx_on(&mut cp.SYST);
-                rfic.set_af_out(&mut cp.SYST, fd6818::AfOutState::RxAudio, true);
-                board::set_rx_band_uhf(gpioa);
-                board::set_speaker_switch(gpiob, true);
+                radio.end_tx(&mut cp.SYST);
                 // board::set_flashlight_led(gpiob, false);
                 writeln!(dbg, "RX ON  @ {} Hz", TEST_FREQ_HZ).ok();
             }
         }
 
         if !transmitting {
+
+            let audio_open = radio.poll_squelch(&mut cp.SYST, 3);
+
             rssi_tick += 1;
             if rssi_tick >= 40 {
                 rssi_tick = 0;
-                let rssi = rfic.get_rssi(&mut cp.SYST);
-                writeln!(dbg, "RSSI: {}", rssi).ok();
+                let rssi = radio.rssi(&mut cp.SYST);
+                writeln!(dbg, "RSSI: {} audio_open={}", rssi, audio_open).ok();
             }
         }
 
