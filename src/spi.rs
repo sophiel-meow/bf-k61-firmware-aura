@@ -39,7 +39,10 @@ impl<'a> SpiBus<'a> {
             _ => 0b111, // 256
         };
 
-        regs.cr2().write(|w| unsafe { w.ds().bits(0b0111) }); // 8-bit frame
+        // 8-bit frame; FRXTH so RXNE flags after every single received byte
+        // instead of waiting for two bytes to pack into a 16-bit slot.
+        regs.cr2()
+            .write(|w| unsafe { w.ds().bits(0b0111).frxth().set_bit() });
 
         regs.cr1().write(|w| unsafe {
             w.mstr().set_bit();
@@ -78,6 +81,17 @@ impl<'a> SpiBus<'a> {
         // for embedded-hal::SpiBus interface
         self.write_byte(0x00);
         self.regs.dr().read().dr().bits() as u8
+    }
+
+    pub fn transfer_byte(&mut self, byte: u8) -> u8 {
+        while self.regs.sr().read().txe().bit_is_clear() {}
+        unsafe {
+            core::ptr::write_volatile(self.regs.dr().as_ptr() as *mut u8, byte);
+        }
+        while self.regs.sr().read().rxne().bit_is_clear() {}
+        let rx = unsafe { core::ptr::read_volatile(self.regs.dr().as_ptr() as *const u8) };
+        while self.regs.sr().read().bsy().bit_is_set() {}
+        rx
     }
 }
 

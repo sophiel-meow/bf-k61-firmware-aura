@@ -34,7 +34,8 @@ pub fn enable_peripheral_clocks(rcc: &rcc::RegisterBlock) {
             .iopfen()
             .set_bit()
     });
-    rcc.apb2enr().modify(|_, w| w.usart1en().set_bit());
+    rcc.apb2enr()
+        .modify(|_, w| w.usart1en().set_bit().spi1en().set_bit());
     rcc.apb1enr().modify(|_, w| w.spi2en().set_bit());
 }
 
