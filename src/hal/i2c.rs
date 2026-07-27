@@ -1,7 +1,7 @@
 //! Bit-banged I2C master
 
 use crate::board;
-use crate::delay;
+use crate::hal::delay;
 use cortex_m::peripheral::SYST;
 use kd32f328_pac::gpioa;
 

@@ -1,6 +1,6 @@
 use crate::board;
-use crate::delay;
-use crate::fd6818::{AfOutState, Fd6818, Power, SubAudio};
+use crate::hal::delay;
+use crate::drivers::fd6818::{AfOutState, Fd6818, Power, SubAudio};
 use cortex_m::peripheral::SYST;
 use kd32f328_pac::{gpioa, gpiof};
 

@@ -1,5 +1,5 @@
 use crate::board;
-use crate::spi::SpiBus;
+use crate::hal::spi::SpiBus;
 use kd32f328_pac::gpioa;
 
 const CMD_WRITE_ENABLE: u8 = 0x06;

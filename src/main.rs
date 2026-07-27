@@ -15,21 +15,13 @@ use embedded_graphics::{
 use kd32f328_pac::Peripherals;
 use panic_halt as _;
 
-mod adc;
 mod board;
-mod clock;
-mod debounce;
-mod delay;
-mod display_spec;
-mod fd6818;
-mod hal_shim;
-mod i2c;
-mod keypad;
-mod norflash;
+mod drivers;
+mod hal;
 mod radio;
-mod rda5807;
-mod spi;
-mod uart;
+
+use drivers::{display_spec, fd6818, keypad, norflash, rda5807};
+use hal::{adc, clock, debounce, delay, hal_shim, spi, uart};
 
 use debounce::Debouncer;
 use hal_shim::{ClosurePin, SystDelay};

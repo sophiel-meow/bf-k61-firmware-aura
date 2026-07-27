@@ -36,6 +36,6 @@ pub struct SystDelay<'a>(pub &'a mut SYST);
 impl DelayNs for SystDelay<'_> {
     fn delay_ns(&mut self, ns: u32) {
         let ms = ns / 1_000_000 + 1; // ceiling to 1ms
-        crate::delay::ms(self.0, ms);
+        crate::hal::delay::ms(self.0, ms);
     }
 }

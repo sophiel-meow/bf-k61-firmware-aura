@@ -1,4 +1,4 @@
-use crate::i2c::I2cBus;
+use crate::hal::i2c::I2cBus;
 use cortex_m::peripheral::SYST;
 use kd32f328_pac::gpioa;
 

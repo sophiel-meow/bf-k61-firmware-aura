@@ -1,7 +1,7 @@
 use cortex_m::peripheral::syst::SystClkSource;
 use cortex_m::peripheral::SYST;
 
-use crate::clock::SYSCLK_HZ;
+use crate::hal::clock::SYSCLK_HZ;
 
 pub fn ms(syst: &mut SYST, ms: u32) {
     let reload = SYSCLK_HZ / 1000 - 1;
