@@ -7,13 +7,26 @@ const BIT_DELAY_US: u32 = 5;
 
 const REG_FREQ_LO: u8 = 0x38;
 const REG_FREQ_HI: u8 = 0x39;
-const REG_STATE: u8 = 0x30;
+const REG_STATE: u8 = 0x30; // REG_03H in datasheet
 const REG_BANDWIDTH: u8 = 0x43;
-const REG_TX_POWER: u8 = 0x28;
 
-const STATE_IDLE: u16 = 0x0000;
-const STATE_RX_ON: u16 = 0xBFF1;
-const STATE_TX_ON: u16 = 0xC1FE;
+/// REG 0x30 is the master block-enable word (datasheet prints it as
+/// "REG_03H", but the bit layout matches these values bit-for-bit):
+///
+/// | bit     | field                                        |
+/// |---------|----------------------------------------------|
+/// | [15]    | vco_cal_en                                   |
+/// | [14]    | pabias_en (voltage itself is REG_PA_BIAS)    |
+/// | [13:10] | rxlink_en (LNA, MIXER, FILTER, ADC)          |
+/// | [9]     | afout_en — 1 = enable AFOUT DAC              |
+/// | [8:4]   | pll_en                                       |
+/// | [3]     | padrv_en                                     |
+/// | [2]     | micin_en — 1 = enable MICIN ADC              |
+/// | [1]     | txon                                         |
+/// | [0]     | rxon                                         |
+///
+const STATE_RX_ON: u16 = 0xBFF1;    // 1 0 1111 1 11111 0001
+const STATE_TX_ON: u16 = 0xC1FE;    // 1 1 0000 0 11111 1110
 
 const BANDWIDTH_WIDE: u16 = 0x3028;
 const BANDWIDTH_NARROW: u16 = 0x4048;
@@ -27,7 +40,8 @@ const REG_RXAGC_4: u8 = 0x10;
 const REG_RXAGC_5: u8 = 0x14;
 const REG_RXAGC_6: u8 = 0x49;
 const REG_RXAGC_7: u8 = 0x7B;
-const REG_MIC_AGC: u8 = 0x19;
+/// PA bias output voltage: [3:0] pabias_out, 0000=1.3V .. 1111=2.8V.
+const REG_PA_BIAS: u8 = 0x19;
 const REG_DEVIATION: u8 = 0x40;
 const REG_MIC_SENS: u8 = 0x7D;
 const REG_VOLUME: u8 = 0x48;
@@ -40,6 +54,38 @@ const REG_RSSI: u8 = 0x67;
 
 const REG_UNKNOWN_2A: u8 = 0x2A;
 const REG_UNKNOWN_21: u8 = 0x21;
+const REG_SCRAMBLE: u8 = 0x31;
+const REG_CTCSS: u8 = 0x51;
+
+/// REG 0x33: chip-internal GPIO used to steer the PA driver between the
+/// VHF and UHF output paths. bits[15:8] = output-enable-bar (active low,
+/// per bit), bits[7:0] = output value (per bit). GPIO2=bit2, GPIO3=bit3.
+const REG_GPIO: u8 = 0x33;
+const GPIO2: u16 = 0x0004;
+const GPIO3: u16 = 0x0008;
+
+/// REG 0x36: PA enable/gain register. REG_28H in Datasheet.
+///
+/// | bits  | field                                                     |
+/// |-------|-----------------------------------------------------------|
+/// | [15:8]| APC target (calibrated per-radio/per-band, from flash)    |
+/// | [7]   | PACTL output enable, 1 = on                               |
+/// | [6]   | reserved                                                  |
+/// | [5:3] | `padrv_gain`, 111 = max .. 000 = min                      |
+/// | [2:0] | `pa_gain_vreg`, 111 = max .. 000 = min                    |
+const REG_PA: u8 = 0x36;
+/// PACTL disabled; gain fields left at max (they are don't-care while the
+/// output is gated off).
+const PA_OFF_VALUE: u16 = 0x007F;
+/// PACTL on, `padrv_gain` = 7, `pa_gain_vreg` = 7 — max driver gain
+/// (datasheet's power table: 8.33dB). Used for the high and mid power
+/// levels, where the level itself is set purely by the APC target.
+#[allow(dead_code)]
+const PA_GAIN_HIGH: u16 = 0x00FF;
+/// PACTL on, `padrv_gain` = 2, `pa_gain_vreg` = 7 — 5.69dB, i.e. 2.6dB
+/// below max drive. This is what the original pairs with the low-power APC
+/// table; low power is the one level that backs off the driver itself.
+const PA_GAIN_LOW: u16 = 0x00D7;
 
 /// DTMF Goertzel-style coefficient table.
 /// Same physical register (0x09) is
@@ -66,6 +112,33 @@ const REG_AF_RX_3K: u8 = 0x75;
 const REG_AF_RX_300_D1: u8 = 0x54;
 const REG_AF_RX_300_D2: u8 = 0x55;
 
+/// REG 0x47: audio-out routing. Base value 0x6040 ORed with one of the
+/// state bitfields below; REG_VOLUME (0x48) is switched alongside it since
+/// beep tone uses a fixed volume independent of the wideband/narrowband
+/// calibration values.
+/// FIXME: check datasheet for real value
+const REG_AF_OUT: u8 = 0x47;
+const AF_OUT_BASE: u16 = 0x6040;
+const AF_STATE_MUTE: u16 = 0x0000;
+const AF_STATE_RX_AUDIO: u16 = 0x0100;
+const AF_STATE_RX_ALARM_TONE: u16 = 0x0200;
+const AF_STATE_BEEP: u16 = 0x0300;
+const AF_STATE_CTC_DCS_TEST: u16 = 0x0600;
+const AF_STATE_FSK_TEST: u16 = 0x0800;
+/// Beep tone volume is independent of the calibrated wideband/narrowband
+/// levels: fixed digital gain 10, analog gain 2.
+const AF_OUT_BEEP_VOLUME: u16 = 0xB800 | (10 << 4) | 2;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum AfOutState {
+    Mute,
+    RxAudio,
+    RxAlarmTone,
+    Beep,
+    CtcDcsTest,
+    FskTest,
+}
+
 /// 26 MHz xtal calibration table
 /// The index is derived from the XTAL_ADJUST byte in spi flash
 /// Entry 8 corresponds to the nominal frequency (no correction)
@@ -84,6 +157,10 @@ const DAC_GAIN: u16 = 15;
 pub struct Fd6818<'a> {
     gpiob: &'a gpiof::RegisterBlock,
     xtal_adjust: u8,
+    vol_wideband: u8,
+    vol_narrowband: u8,
+    mic_mod_depth: u8,
+    pa_target_low: u8,
 }
 
 impl<'a> Fd6818<'a> {
@@ -91,12 +168,133 @@ impl<'a> Fd6818<'a> {
         Fd6818 {
             gpiob,
             xtal_adjust: XTAL_ADJUST_ZERO_POINT,
+            vol_wideband: 25,
+            vol_narrowband: 25,
+            mic_mod_depth: 0,
+            pa_target_low: 100,
         }
     }
 
     /// xtal calibration byte in flash (0xF210+6)
     pub fn set_xtal_adjust(&mut self, value: u8) {
         self.xtal_adjust = value;
+    }
+
+    /// Flash address holding the calibrated low-power PA/APC target byte
+    /// for `freq_hz`.
+    /// Only U_400/V_136/V_200 bands are actually calibrated
+    pub fn pa_target_low_addr(freq_hz: u32) -> Option<u32> {
+        let mhz = freq_hz / 1_000_000;
+        if freq_hz >= 400_000_000 {
+            Some(0xF080 + (mhz - 400) / 10)
+        } else if freq_hz >= 200_000_000 {
+            Some(0xF0A0 + (mhz - 200) / 5)
+        } else if freq_hz >= 130_000_000 {
+            let idx = ((mhz - 130) / 3).min(15);
+            Some(0xF090 + idx)
+        } else {
+            None
+        }
+    }
+
+    /// Calibrated low-power APC target byte, read from flash at the
+    /// address `pa_target_low_addr()` gives for the current frequency.
+    pub fn set_pa_calibration(&mut self, target_low: u8) {
+        self.pa_target_low = target_low;
+    }
+
+    fn set_gpio_bit(&mut self, syst: &mut SYST, gpiox: u16, high: bool) {
+        let mut val = self.read_reg(syst, REG_GPIO);
+        val &= !(gpiox << 8); // clear enable-bar: enable this GPIO's output
+        if high {
+            val |= gpiox;
+        } else {
+            val &= !gpiox;
+        }
+        self.write_reg(syst, REG_GPIO, val);
+    }
+
+    /// Routes the PA driver to the UHF path (350/400MHz bands).
+    pub fn set_tx_band_uhf(&mut self, syst: &mut SYST) {
+        self.set_gpio_bit(syst, GPIO3, false);
+        self.set_gpio_bit(syst, GPIO2, true);
+    }
+
+    /// Routes the PA driver to the VHF path (136/200MHz bands).
+    pub fn set_tx_band_vhf(&mut self, syst: &mut SYST) {
+        self.set_gpio_bit(syst, GPIO2, false);
+        self.set_gpio_bit(syst, GPIO3, true);
+    }
+
+    pub fn pa_enable_low_power(&mut self, syst: &mut SYST) {
+        let value = ((self.pa_target_low as u16) << 8) | PA_GAIN_LOW;
+        self.write_reg(syst, REG_PA, value);
+    }
+
+    pub fn pa_off(&mut self, syst: &mut SYST) {
+        self.write_reg(syst, REG_PA, PA_OFF_VALUE);
+    }
+
+    /// called on every PTT
+    /// The caller is responsible for `RfOff()`'s other two effects: the
+    /// speaker amp and the RX front-end band pins (`board::set_rx_band_off`).
+    pub fn rf_off(&mut self, syst: &mut SYST) {
+        self.set_af_out(syst, AfOutState::Mute, true);
+        self.set_gpio_bit(syst, GPIO2, false);
+        self.set_gpio_bit(syst, GPIO3, false);
+    }
+
+    /// Calibration bytes from the flash block at 0xF210: offset 0 is mic
+    /// modulation depth, offset 3/4 are wideband/narrowband AF volume
+    /// (max 31 each). Used by `apply_tx_mic_gain()` and `set_af_out()`.
+    pub fn set_audio_calibration(&mut self, mic_mod_depth: u8, vol_wideband: u8, vol_narrowband: u8) {
+        self.mic_mod_depth = mic_mod_depth;
+        self.vol_wideband = vol_wideband;
+        self.vol_narrowband = vol_narrowband;
+    }
+
+    /// Selects what REG 0x47 routes to the audio-out pin and switches
+    /// REG_VOLUME (0x48) alongside it. `wide` selects which calibrated
+    /// volume level applies when the state isn't a fixed-volume tone.
+    pub fn set_af_out(&mut self, syst: &mut SYST, state: AfOutState, wide: bool) {
+        let state_bits = match state {
+            AfOutState::Mute => AF_STATE_MUTE,
+            AfOutState::RxAudio => AF_STATE_RX_AUDIO,
+            AfOutState::RxAlarmTone => AF_STATE_RX_ALARM_TONE,
+            AfOutState::Beep => AF_STATE_BEEP,
+            AfOutState::CtcDcsTest => AF_STATE_CTC_DCS_TEST,
+            AfOutState::FskTest => AF_STATE_FSK_TEST,
+        };
+        self.write_reg(syst, REG_AF_OUT, AF_OUT_BASE | state_bits);
+
+        let vol_reg = if state == AfOutState::Beep {
+            AF_OUT_BEEP_VOLUME
+        } else {
+            let vol = (if wide { self.vol_wideband } else { self.vol_narrowband } & 0x3F) as u16;
+            0x8000 | (vol << 4) | DAC_GAIN
+        };
+        self.write_reg(syst, REG_VOLUME, vol_reg);
+    }
+
+    pub fn apply_tx_mic_gain(&mut self, syst: &mut SYST) {
+        let gain = (self.mic_mod_depth % 32) as u16;
+        self.write_reg(syst, REG_MIC_SENS, (MIC_SENS_VALUE & 0xFFE0) | gain);
+    }
+
+    /// TODO: REG 0x51 = 0: CTCSS/DCS subaudio tone generator
+    pub fn disable_subaudio_tx(&mut self, syst: &mut SYST) {self.write_reg(syst, REG_CTCSS, 0x0000);
+    }
+
+    pub fn wake(&mut self, syst: &mut SYST) {
+        self.write_reg(syst, REG_POWER, POWER_UP_VALUE);
+    }
+
+    pub fn set_scramble_off(&mut self, syst: &mut SYST) {
+        let scramble = self.read_reg(syst, REG_SCRAMBLE) & !0x0002;
+        self.write_reg(syst, REG_SCRAMBLE, scramble);
+
+        let dev = self.read_reg(syst, REG_DEVIATION) & 0xF000;
+        self.write_reg(syst, REG_DEVIATION, dev | DEVIATION_VALUE);
     }
 
     /// (d1, d2) register payload for one AF response trim step.
@@ -253,21 +451,20 @@ impl<'a> Fd6818<'a> {
         self.write_reg(syst, REG_BANDWIDTH, value);
     }
 
-    /// padrv_gain[2:0]=REG_28H[5:3], pa_gain_vreg[2:0]=REG_28H[2:0]，
-    pub fn set_tx_power_min(&mut self, syst: &mut SYST) {
-        self.write_reg(syst, REG_TX_POWER, 0x0000); // TODO: minimal power
-    }
+    const STATE_PREFIX_WIDE: u16 = 0x0200;
 
     pub fn rx_on(&mut self, syst: &mut SYST) {
+        self.write_reg(syst, REG_STATE, Self::STATE_PREFIX_WIDE);
         self.write_reg(syst, REG_STATE, STATE_RX_ON);
     }
 
     pub fn tx_on(&mut self, syst: &mut SYST) {
+        self.write_reg(syst, REG_STATE, Self::STATE_PREFIX_WIDE);
         self.write_reg(syst, REG_STATE, STATE_TX_ON);
     }
 
     pub fn idle(&mut self, syst: &mut SYST) {
-        self.write_reg(syst, REG_STATE, STATE_IDLE);
+        self.write_reg(syst, REG_STATE, Self::STATE_PREFIX_WIDE);
     }
 
     pub fn init(&mut self, syst: &mut SYST) {
@@ -287,8 +484,8 @@ impl<'a> Fd6818<'a> {
         self.write_reg(syst, REG_RXAGC_6, 0x2A38);
         self.write_reg(syst, REG_RXAGC_7, 0x8420);
 
-        // MIC AGC
-        self.write_reg(syst, REG_MIC_AGC, 0x1041);
+        // PA bias output: low nibble 0x1 ~= 1.4V
+        self.write_reg(syst, REG_PA_BIAS, 0x1041);
 
         self.write_reg(syst, REG_UNKNOWN_2A, 0x4F18);
 
@@ -312,6 +509,9 @@ impl<'a> Fd6818<'a> {
         // GAIN = (256 + dev_lvl) >> dev_sh.
         let temp = self.read_reg(syst, REG_DEVIATION) & 0xF000;
         self.write_reg(syst, REG_DEVIATION, temp | DEVIATION_VALUE);
+
+        let scramble = self.read_reg(syst, REG_SCRAMBLE) & !0x0002;
+        self.write_reg(syst, REG_SCRAMBLE, scramble);
 
         // mic sensitivity, vol.
         self.write_reg(syst, REG_MIC_SENS, MIC_SENS_VALUE);
