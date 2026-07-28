@@ -4,5 +4,7 @@ pub mod debounce;
 pub mod delay;
 pub mod hal_shim;
 pub mod i2c;
+pub mod scheduler;
 pub mod spi;
 pub mod uart;
+pub mod wear_leveled;

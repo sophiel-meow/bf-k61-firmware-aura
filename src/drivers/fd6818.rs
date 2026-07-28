@@ -169,6 +169,23 @@ const AF_STATE_FSK_TEST: u16 = 0x0800;
 /// levels: fixed digital gain 10, analog gain 2.
 const AF_OUT_BEEP_VOLUME: u16 = 0xB800 | (10 << 4) | 2;
 
+/// REG 0x71: single-tone oscillator frequency (shared by the UI key-beep,
+/// the 1750Hz repeater tone, and the roger beep).
+/// REG 0x70: its gain/enable.
+const REG_TONE_FREQ: u8 = 0x71;
+const REG_TONE_GAIN: u8 = 0x70;
+const TONE_GAIN_MASK: u16 = 0x70FF;
+/// Fixed tone gain (60) plus the enable bit; only bits outside the mask
+/// above are forced, the rest of whatever REG 0x70 already held survives.
+const TONE_GAIN_ON_BITS: u16 = 0x8000 | (60 << 8);
+
+/// REG_STATE values for the two tone-oscillator run modes:
+/// `false`: sidetone only, transmitter left alone, what the UI key-beep uses
+/// `true`: also keys the transmitter so the tone actually goes out over RF,
+/// what the repeater-access tone and roger beep use
+const STATE_TONE: u16 = 0x0302;
+const STATE_TX_TONE: u16 = 0xC3FA;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AfOutState {
     Mute,
@@ -319,6 +336,42 @@ impl<'a> Fd6818<'a> {
         self.cts_mod_depth = cts_mod_depth;
         self.vol_wideband = vol_wideband;
         self.vol_narrowband = vol_narrowband;
+    }
+
+    /// Starts the single-tone oscillator at `hz_div_10` (frequency in units
+    /// of 10Hz, e.g. `175` = 1750Hz) and routes it to the audio-out path.
+    /// `key_tx = false` generates the tone purely on the local sidetone path,
+    /// transmitter left alone (the UI key-beep); `key_tx = true` also keys the
+    /// transmitter so the tone actually goes out over RF (the repeater-access
+    /// tone and roger beep).
+    pub fn tx_single_tone_on(&mut self, syst: &mut SYST, hz_div_10: u16, key_tx: bool) {
+        let gain = self.read_reg(syst, REG_TONE_GAIN);
+        self.write_reg(
+            syst,
+            REG_TONE_GAIN,
+            (gain & TONE_GAIN_MASK) | TONE_GAIN_ON_BITS,
+        );
+        self.write_reg(syst, REG_STATE, 0x0000);
+        self.write_reg(
+            syst,
+            REG_STATE,
+            if key_tx { STATE_TX_TONE } else { STATE_TONE },
+        );
+        self.set_af_out(syst, AfOutState::Beep, true);
+
+        let reg = (hz_div_10 as u32 * 1_032_444 / 10_000) as u16;
+        self.write_reg(syst, REG_TONE_FREQ, reg);
+    }
+
+    /// Stops the tone and falls back to plain RX or TX
+    pub fn tx_single_tone_off(&mut self, syst: &mut SYST, was_transmitting: bool) {
+        self.write_reg(syst, REG_TONE_FREQ, 0);
+        self.write_reg(syst, REG_TONE_GAIN, 0x0000);
+        if was_transmitting {
+            self.tx_on(syst);
+        } else {
+            self.rx_on(syst);
+        }
     }
 
     /// Selects what REG 0x47 routes to the audio-out pin and switches

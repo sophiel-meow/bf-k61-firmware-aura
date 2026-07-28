@@ -15,23 +15,20 @@ use embedded_graphics::{
 use kd32f328_pac::Peripherals;
 use panic_halt as _;
 
+mod app;
 mod board;
 mod drivers;
+mod flash_map;
 mod hal;
 mod radio;
 
-use drivers::{display_spec, fd6818, keypad, norflash, rda5807};
-use hal::{adc, clock, debounce, delay, hal_shim, spi, uart};
+use drivers::{display_spec, fd6818, keypad, norflash};
+use hal::{adc, clock, debounce, delay, hal_shim, scheduler, spi, uart};
 
 use debounce::Debouncer;
 use hal_shim::{ClosurePin, SystDelay};
 
-const TEST_FREQ_HZ: u32 = 439_500_000;
-const FM_TEST_FREQ_KHZ: u32 = 107_600;
-
-fn checksum32(buf: &[u8]) -> u32 {
-    buf.iter().fold(0u32, |acc, &b| acc.wrapping_add(b as u32))
-}
+const DEFAULT_FREQ_HZ: u32 = 439_500_000;
 
 struct TextBuf<const N: usize> {
     buf: [u8; N],
@@ -60,6 +57,100 @@ impl<const N: usize> core::fmt::Write for TextBuf<N> {
         self.len += n;
         Ok(())
     }
+}
+
+fn draw_standby<D>(lcd: &mut D, app: &app::App)
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    Rectangle::new(Point::new(0, 0), Size::new(128, 64))
+        .into_styled(PrimitiveStyle::with_fill(BinaryColor::Off))
+        .draw(lcd)
+        .ok();
+
+    let master = app.master_index();
+    let last_signal = app.last_signal_side();
+
+    for i in 0..2usize {
+        let y = if i == 0 { 2 } else { 34 };
+        let is_master = i == master;
+        let freq_hz = app.side_freq_hz(i);
+        let mhz = freq_hz / 1_000_000;
+        let frac = (freq_hz % 1_000_000) / 10;
+        let marker = if !is_master && last_signal == Some(i) {
+            "*"
+        } else {
+            " "
+        };
+
+        let mut line: TextBuf<20> = TextBuf::new();
+        write!(
+            line,
+            "{}{} {:3}.{:05}",
+            marker,
+            if i == 0 { "A" } else { "B" },
+            mhz,
+            frac
+        )
+        .ok();
+
+        let (bg, fg) = if is_master {
+            (BinaryColor::On, BinaryColor::Off)
+        } else {
+            (BinaryColor::Off, BinaryColor::On)
+        };
+
+        Rectangle::new(Point::new(0, y), Size::new(128, 28))
+            .into_styled(PrimitiveStyle::with_fill(bg))
+            .draw(lcd)
+            .ok();
+        Text::new(
+            line.as_str(),
+            Point::new(4, y + 18),
+            MonoTextStyle::new(&FONT_6X10, fg),
+        )
+        .draw(lcd)
+        .ok();
+    }
+}
+
+fn draw_menu<D>(lcd: &mut D, app: &app::App)
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    Rectangle::new(Point::new(0, 0), Size::new(128, 64))
+        .into_styled(PrimitiveStyle::with_fill(BinaryColor::Off))
+        .draw(lcd)
+        .ok();
+
+    Text::new(
+        app.menu_item_label(),
+        Point::new(4, 14),
+        MonoTextStyle::new(&FONT_6X10, BinaryColor::On),
+    )
+    .draw(lcd)
+    .ok();
+
+    let mut value: TextBuf<20> = TextBuf::new();
+    app.menu_value_text(&mut value);
+
+    let editing = app.menu_editing();
+    let (bg, fg) = if editing {
+        (BinaryColor::On, BinaryColor::Off)
+    } else {
+        (BinaryColor::Off, BinaryColor::On)
+    };
+    Rectangle::new(Point::new(0, 30), Size::new(128, 20))
+        .into_styled(PrimitiveStyle::with_fill(bg))
+        .draw(lcd)
+        .ok();
+    Text::new(
+        value.as_str(),
+        Point::new(4, 44),
+        MonoTextStyle::new(&FONT_6X10, fg),
+    )
+    .draw(lcd)
+    .ok();
 }
 
 #[entry]
@@ -129,41 +220,9 @@ fn main() -> ! {
     lcd.set_display_on(true).ok();
     writeln!(dbg, "lcd init done").ok();
 
-    Rectangle::new(Point::new(0, 0), Size::new(128, 64))
-        .into_styled(PrimitiveStyle::with_stroke(BinaryColor::On, 1))
-        .draw(&mut lcd)
-        .ok();
-    Text::new(
-        "Hello, World!",
-        Point::new(24, 32),
-        MonoTextStyle::new(&FONT_6X10, BinaryColor::On),
-    )
-    .draw(&mut lcd)
-    .ok();
-
-    lcd.flush().ok();
-
     let mut rfic = fd6818::Fd6818::new(gpiob);
     rfic.init(&mut cp.SYST);
     writeln!(dbg, "fd6818 init done").ok();
-
-    let scratch_addr = 0x71;
-    let scratch_value = 0xA5A5u16;
-    rfic.write_reg(&mut cp.SYST, scratch_addr, scratch_value);
-    let readback = rfic.read_reg(&mut cp.SYST, scratch_addr);
-    writeln!(
-        dbg,
-        "fd6818 scratch reg 0x{:02x}: wrote {:#06x}, read back {:#06x}, {}",
-        scratch_addr,
-        scratch_value,
-        readback,
-        if readback == scratch_value {
-            "OK"
-        } else {
-            "MISMATCH"
-        }
-    )
-    .ok();
 
     let flash_spi = spi::SpiBus::new(spi1, spi::ClockMode::Mode3, 4);
     let mut norflash = norflash::NorFlash::new(flash_spi, gpioa);
@@ -190,157 +249,115 @@ fn main() -> ! {
     )
     .ok();
 
-    const TEST_POWER: fd6818::Power = fd6818::Power::Low;
-    if let Some(pa_addr) = fd6818::Fd6818::pa_target_addr(TEST_FREQ_HZ, TEST_POWER) {
+    const DEFAULT_POWER: fd6818::Power = fd6818::Power::Low;
+    if let Some(pa_addr) = fd6818::Fd6818::pa_target_addr(DEFAULT_FREQ_HZ, DEFAULT_POWER) {
         let mut pa_byte = [0u8; 1];
         norflash.read_bytes(pa_addr, &mut pa_byte);
         rfic.set_pa_calibration(pa_byte[0]);
         writeln!(dbg, "pa_target @0x{:04x} = {}", pa_addr, pa_byte[0]).ok();
     }
 
-    let mut radio = radio::Radio::new(
+    let radio = radio::Radio::new(
         rfic,
         gpioa,
         gpiob,
         radio::ChannelConfig {
-            freq_hz: TEST_FREQ_HZ,
+            freq_hz: DEFAULT_FREQ_HZ,
+            tx_freq_hz: DEFAULT_FREQ_HZ,
             wide_band: true,
-            power: TEST_POWER,
-            sql_level: 1,
+            power: DEFAULT_POWER,
             subaudio_tx: fd6818::SubAudio::None,
-            subaudio_rx: fd6818::SubAudio::Ctcss(885),
-            tail_elimination: true,
+            subaudio_rx: fd6818::SubAudio::None,
         },
     );
 
-    radio.enter_rx(&mut cp.SYST);
-    writeln!(dbg, "RX ON  @ {} Hz, watching RSSI...", TEST_FREQ_HZ).ok();
+    let mut app = app::App::new(
+        radio,
+        keys,
+        norflash,
+        radio::ChannelConfig {
+            freq_hz: DEFAULT_FREQ_HZ,
+            tx_freq_hz: DEFAULT_FREQ_HZ,
+            wide_band: true,
+            power: DEFAULT_POWER,
+            subaudio_tx: fd6818::SubAudio::None,
+            subaudio_rx: fd6818::SubAudio::Ctcss(885),
+        },
+        &mut cp.SYST,
+    );
 
-    // let mut fm = rda5807::Rda5807::new(gpioa);
-    // fm.set_frequency_khz(&mut cp.SYST, FM_TEST_FREQ_KHZ);
-    writeln!(dbg, "rda5807 tuned to {} kHz", FM_TEST_FREQ_KHZ).ok();
+    app.radio.enter_rx(&mut cp.SYST);
 
+    writeln!(
+        dbg,
+        "RX ON  @ {} Hz, watching RSSI...",
+        app.master_freq_hz()
+    )
+    .ok();
+
+    let mut scheduler = scheduler::Scheduler::new();
     let mut debouncer = Debouncer::new(board::read_ptt(gpioa));
-    let mut transmitting = false;
-    let mut rssi_tick: u8 = 0;
-    let mut fm_tick: u16 = 0;
-    let mut batt_tick: u16 = 0;
-    let mut key_scan_toggle = false;
 
     const BATT_ADC_CHANNEL: u8 = 1;
 
     loop {
-        key_scan_toggle = !key_scan_toggle;
-        if key_scan_toggle {
-            keys.poll(&mut cp.SYST);
-            while let Some(ev) = keys.pop_event() {
-                writeln!(dbg, "key: {:?} {:?}", ev.key, ev.kind).ok();
-            }
-        }
+        let due = scheduler.tick();
+
+        app.poll_keys(&mut cp.SYST);
 
         if board::power_switch_off(gpioa) {
             delay::ms(&mut cp.SYST, 50);
             if board::power_switch_off(gpioa) {
                 writeln!(dbg, "power switch off, shutting down").ok();
-                radio.fd6818_mut().rf_off(&mut cp.SYST);
-                // fm.power_off(&mut cp.SYST);
+                app.radio.fd6818_mut().rf_off(&mut cp.SYST);
                 board::set_power_latch(gpioa, false);
                 delay::ms(&mut cp.SYST, 500);
                 SCB::sys_reset();
             }
         }
 
-        batt_tick += 1;
-        if batt_tick >= 400 {
-            batt_tick = 0;
+        if due.every_500ms {
             let raw = batt_adc.read_channel(BATT_ADC_CHANNEL);
             writeln!(dbg, "batt raw: {} (8-bit: {})", raw, raw >> 4).ok();
         }
 
         if let Some(level) = debouncer.sample(board::read_ptt(gpioa)) {
-            if !level {
-                transmitting = true;
-                radio.enter_tx(&mut cp.SYST);
-                // board::set_flashlight_led(gpiob, true);
-                writeln!(dbg, "TX ON  @ {} Hz (low power)", TEST_FREQ_HZ).ok();
+            app.set_ptt(&mut cp.SYST, !level);
+            if app.is_transmitting() {
+                writeln!(dbg, "TX ON  @ {} Hz (low power)", app.master_freq_hz()).ok();
+            } else {
+                writeln!(dbg, "RX ON  @ {} Hz", app.watching_freq_hz()).ok();
+            }
+        }
 
-                let fd = radio.fd6818_mut();
-                let r7d = fd.read_reg(&mut cp.SYST, 0x7D);
-                let r40 = fd.read_reg(&mut cp.SYST, 0x40);
-                let r30 = fd.read_reg(&mut cp.SYST, 0x30);
-                let r36 = fd.read_reg(&mut cp.SYST, 0x36);
-                let r19 = fd.read_reg(&mut cp.SYST, 0x19);
+        app.poll_tot(&mut cp.SYST);
+
+        if !app.is_transmitting() {
+            let audio_open = app.radio.poll_squelch(&mut cp.SYST, 3);
+            app.poll_dual_standby(&mut cp.SYST, app.radio.rssi_open());
+
+            if due.every_50ms {
+                let rssi = app.radio.rssi(&mut cp.SYST);
                 writeln!(
                     dbg,
-                    "regs: 0x7D={:#06x} 0x40={:#06x} 0x30={:#06x} 0x36={:#06x} 0x19={:#06x}",
-                    r7d, r40, r30, r36, r19
+                    "RSSI: {} audio_open={} freq={} ch_mode={} ch_num={}",
+                    rssi,
+                    audio_open,
+                    app.watching_freq_hz(),
+                    app.watching_is_channel_mode(),
+                    app.watching_channel_num()
                 )
                 .ok();
 
-                let mut line1: TextBuf<24> = TextBuf::new();
-                let mut line2: TextBuf<24> = TextBuf::new();
-                let mut line3: TextBuf<24> = TextBuf::new();
-                write!(line1, "7D:{:04x} 40:{:04x}", r7d, r40).ok();
-                write!(line2, "30:{:04x} 36:{:04x}", r30, r36).ok();
-                write!(line3, "19:{:04x} TX", r19).ok();
-
-                Rectangle::new(Point::new(0, 0), Size::new(128, 64))
-                    .into_styled(PrimitiveStyle::with_fill(BinaryColor::Off))
-                    .draw(&mut lcd)
-                    .ok();
-                Text::new(
-                    line1.as_str(),
-                    Point::new(0, 10),
-                    MonoTextStyle::new(&FONT_6X10, BinaryColor::On),
-                )
-                .draw(&mut lcd)
-                .ok();
-                Text::new(
-                    line2.as_str(),
-                    Point::new(0, 22),
-                    MonoTextStyle::new(&FONT_6X10, BinaryColor::On),
-                )
-                .draw(&mut lcd)
-                .ok();
-                Text::new(
-                    line3.as_str(),
-                    Point::new(0, 34),
-                    MonoTextStyle::new(&FONT_6X10, BinaryColor::On),
-                )
-                .draw(&mut lcd)
-                .ok();
+                if app.mode() == app::Mode::Menu {
+                    draw_menu(&mut lcd, &app);
+                } else {
+                    draw_standby(&mut lcd, &app);
+                }
                 lcd.flush().ok();
-            } else {
-                transmitting = false;
-                radio.end_tx(&mut cp.SYST);
-                // board::set_flashlight_led(gpiob, false);
-                writeln!(dbg, "RX ON  @ {} Hz", TEST_FREQ_HZ).ok();
             }
         }
 
-        if !transmitting {
-            let audio_open = radio.poll_squelch(&mut cp.SYST, 3);
-
-            rssi_tick += 1;
-            if rssi_tick >= 40 {
-                rssi_tick = 0;
-                let rssi = radio.rssi(&mut cp.SYST);
-                writeln!(dbg, "RSSI: {} audio_open={}", rssi, audio_open).ok();
-            }
-        }
-
-        // fm_tick += 1;
-        // if fm_tick >= 400 {
-        //     fm_tick = 0;
-        //     // let (complete, seek_failed, is_station, rssi) = fm.status(&mut cp.SYST);
-        //     writeln!(
-        //         dbg,
-        //         "fm status: complete={} seek_failed={} is_station={} rssi={}",
-        //         complete, seek_failed, is_station, rssi
-        //     )
-        //     .ok();
-        // }
-
-        delay::ms(&mut cp.SYST, 5);
+        delay::ms(&mut cp.SYST, 10);
     }
 }

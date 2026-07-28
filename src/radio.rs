@@ -1,12 +1,18 @@
 use crate::board;
-use crate::hal::delay;
 use crate::drivers::fd6818::{AfOutState, Fd6818, Power, SubAudio};
+use crate::hal::delay;
 use cortex_m::peripheral::SYST;
 use kd32f328_pac::{gpioa, gpiof};
 
 /// How long `end_tx()` holds the tail-elimination tone before actually
 /// cutting the carrier.
 const SEND_TAIL_HOLD_MS: u32 = 300;
+
+/// UI key-beep default tone sequence: 1500Hz/80ms then 450Hz/35ms
+/// (`hz_div_10`, `duration_ms`) pairs
+const BEEP_TONES: [(u16, u32); 2] = [(150, 80), (45, 35)];
+/// Roger-beep tone pair: 1000Hz then 850Hz, 80ms each
+const ROGER_TONES: [(u16, u32); 2] = [(100, 80), (85, 80)];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Band {
@@ -16,16 +22,14 @@ enum Band {
 
 // TODO: more channel field
 // TODO: VFO info
+#[derive(Clone, Copy)]
 pub struct ChannelConfig {
     pub freq_hz: u32,
+    pub tx_freq_hz: u32,
     pub wide_band: bool,
     pub power: Power,
-    pub sql_level: u8,
     pub subaudio_tx: SubAudio,
     pub subaudio_rx: SubAudio,
-
-    // TODO: move to global settings
-    pub tail_elimination: bool,
 }
 
 pub struct Radio<'a> {
@@ -33,6 +37,11 @@ pub struct Radio<'a> {
     gpioa: &'a gpioa::RegisterBlock,
     gpiob: &'a gpiof::RegisterBlock,
     cfg: ChannelConfig,
+
+    sql_level: u8,
+    tail_elimination: bool,
+    beeps_enabled: bool,
+    roger_beep: bool,
 
     /// Whether `REG_AF_OUT` is currently routed to `RxAudio` (vs `Mute`).
     /// the chip's own squelch decision (`REG 0x78`) doesn't touch this
@@ -56,6 +65,12 @@ impl<'a> Radio<'a> {
             gpioa,
             gpiob,
             cfg,
+            // FIXME: Overridden immediately by the caller once global settings
+            // are loaded; these are just placeholder startup values.
+            sql_level: 3,
+            tail_elimination: true,
+            beeps_enabled: true,
+            roger_beep: false,
             audio_open: false,
             sq_debounce: 0,
             rssi_open: false,
@@ -84,6 +99,10 @@ impl<'a> Radio<'a> {
         self.cfg.freq_hz = freq_hz;
     }
 
+    pub fn set_tx_frequency(&mut self, freq_hz: u32) {
+        self.cfg.tx_freq_hz = freq_hz;
+    }
+
     pub fn set_power(&mut self, power: Power) {
         self.cfg.power = power;
     }
@@ -97,12 +116,63 @@ impl<'a> Radio<'a> {
     }
 
     pub fn set_sql_level(&mut self, syst: &mut SYST, level: u8) {
-        self.cfg.sql_level = level;
+        self.sql_level = level;
         self.fd6818.set_squelch_level(syst, self.cfg.freq_hz, level);
+    }
+
+    pub fn set_tail_elimination(&mut self, enabled: bool) {
+        self.tail_elimination = enabled;
+    }
+
+    pub fn set_beeps_enabled(&mut self, enabled: bool) {
+        self.beeps_enabled = enabled;
+    }
+
+    pub fn set_roger_beep(&mut self, enabled: bool) {
+        self.roger_beep = enabled;
+    }
+
+    /// Local-only UI key-beep: doesn't key the transmitter.
+    pub fn play_beep(&mut self, syst: &mut SYST) {
+        if !self.beeps_enabled || self.audio_open {
+            return;
+        }
+        board::set_speaker_switch(self.gpiob, true);
+        self.play_tone_sequence(syst, &BEEP_TONES, false);
+    }
+
+    /// Two-tone "roger beep", transmitted over RF right after PTT release
+    /// called from `end_tx()`, before tail-elimination/actually dropping
+    /// the carrier
+    fn play_roger_tone(&mut self, syst: &mut SYST) {
+        self.play_tone_sequence(syst, &ROGER_TONES, true);
+    }
+
+    fn play_tone_sequence(&mut self, syst: &mut SYST, tones: &[(u16, u32)], key_tx: bool) {
+        for &(hz_div_10, duration_ms) in tones {
+            self.fd6818.tx_single_tone_on(syst, hz_div_10, key_tx);
+            delay::ms(syst, duration_ms);
+        }
+        self.fd6818.tx_single_tone_off(syst, key_tx);
+
+        // Tone playback silently overwrote REG_AF_OUT; restore it to
+        // whatever `poll_squelch()`'s last decision actually was, since that
+        // decision (`self.audio_open`) may not have changed and so
+        // wouldn't otherwise get re-applied.
+        let state = if self.audio_open {
+            AfOutState::RxAudio
+        } else {
+            AfOutState::Mute
+        };
+        self.fd6818.set_af_out(syst, state, self.cfg.wide_band);
     }
 
     pub fn squelch_open(&mut self, syst: &mut SYST) -> bool {
         self.fd6818.squelch_open(syst)
+    }
+
+    pub fn rssi_open(&self) -> bool {
+        self.rssi_open
     }
 
     pub fn poll_squelch(&mut self, syst: &mut SYST, debounce_ticks: u8) -> bool {
@@ -161,7 +231,7 @@ impl<'a> Radio<'a> {
         self.fd6818.set_frequency_hz(syst, self.cfg.freq_hz);
         self.fd6818.set_wide_bandwidth(syst, self.cfg.wide_band);
         self.fd6818
-            .set_squelch_level(syst, self.cfg.freq_hz, self.cfg.sql_level);
+            .set_squelch_level(syst, self.cfg.freq_hz, self.sql_level);
         self.fd6818.enable_rx_subaudio(syst, self.cfg.subaudio_rx);
         self.fd6818.rx_on(syst);
 
@@ -190,7 +260,7 @@ impl<'a> Radio<'a> {
         board::set_rx_band_off(self.gpioa);
         self.fd6818.idle(syst);
         self.fd6818.wake(syst);
-        self.fd6818.set_frequency_hz(syst, self.cfg.freq_hz);
+        self.fd6818.set_frequency_hz(syst, self.cfg.tx_freq_hz);
         self.fd6818.set_wide_bandwidth(syst, self.cfg.wide_band);
         self.fd6818.set_subaudio_tx(syst, self.cfg.subaudio_tx);
         self.fd6818.set_scramble_off(syst);
@@ -205,7 +275,10 @@ impl<'a> Radio<'a> {
     }
 
     pub fn end_tx(&mut self, syst: &mut SYST) {
-        if self.cfg.tail_elimination {
+        if self.roger_beep {
+            self.play_roger_tone(syst);
+        }
+        if self.tail_elimination {
             self.fd6818.send_tail(syst, true);
             delay::ms(syst, SEND_TAIL_HOLD_MS);
             self.fd6818.send_tail(syst, false);
