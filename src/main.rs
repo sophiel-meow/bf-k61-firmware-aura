@@ -5,7 +5,6 @@ use core::fmt::Write as _;
 use cortex_m::peripheral::SCB;
 use cortex_m_rt::entry;
 use embedded_graphics::pixelcolor::BinaryColor;
-use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 use embedded_graphics::{
     mono_font::{ascii::FONT_6X10, MonoTextStyle},
@@ -22,6 +21,7 @@ mod flash_map;
 mod hal;
 mod radio;
 
+use display_interface::{DataFormat, WriteOnlyDataCommand};
 use drivers::{display_spec, fd6818, keypad, norflash};
 use hal::{adc, clock, debounce, delay, hal_shim, scheduler, spi, uart};
 
@@ -29,6 +29,34 @@ use debounce::Debouncer;
 use hal_shim::{ClosurePin, SystDelay};
 
 const DEFAULT_FREQ_HZ: u32 = 439_500_000;
+
+const CONTRAST_VOLUMES: [u8; 5] = [37, 41, 45, 48, 51];
+
+/// Applies a contrast level to the display. The st7565 crate keeps its
+/// command interface private, so the only way to send the electronic-volume
+/// command at runtime is to detach the SPI interface, push the two command
+/// bytes through it raw, and attach it back.
+fn apply_lcd_contrast<DI: WriteOnlyDataCommand>(
+    lcd: st7565::ST7565<
+        DI,
+        display_spec::Sc5260Spec,
+        st7565::modes::GraphicsMode<'_, 128, 8>,
+        128,
+        64,
+        8,
+    >,
+    level: u8,
+) -> st7565::ST7565<DI, display_spec::Sc5260Spec, st7565::modes::GraphicsMode<'_, 128, 8>, 128, 64, 8>
+{
+    let (detached, mut interface) = lcd.release_display_interface();
+    interface
+        .send_commands(DataFormat::U8(&[
+            0x81,
+            CONTRAST_VOLUMES[level.min(4) as usize],
+        ]))
+        .ok();
+    detached.attach_display_interface(interface)
+}
 
 struct TextBuf<const N: usize> {
     buf: [u8; N],
@@ -188,11 +216,12 @@ fn main() -> ! {
     board::init_rx_band_pins(gpioa);
     board::init_i2c_pins(gpioa);
     board::init_battery_adc_pin(gpioa);
+    board::init_vox_adc_pin(gpioa);
     board::init_keypad_pins(gpiob, gpioc, gpiof);
     board::init_rx_led_pin(gpioa);
 
     let mut batt_adc = adc::Adc::new(adc_regs);
-    let mut keys = keypad::KeyManager::new(gpiob, gpioc, gpiof);
+    let keys = keypad::KeyManager::new(gpiob, gpioc, gpiof);
 
     let mut dbg = uart::DebugUart::new(usart1, clock::SYSCLK_HZ, 115_200);
     writeln!(dbg, "bfk6-fw boot, sysclk={}Hz", clock::SYSCLK_HZ).ok();
@@ -220,43 +249,10 @@ fn main() -> ! {
     lcd.set_display_on(true).ok();
     writeln!(dbg, "lcd init done").ok();
 
-    let mut rfic = fd6818::Fd6818::new(gpiob);
-    rfic.init(&mut cp.SYST);
-    writeln!(dbg, "fd6818 init done").ok();
-
     let flash_spi = spi::SpiBus::new(spi1, spi::ClockMode::Mode3, 4);
-    let mut norflash = norflash::NorFlash::new(flash_spi, gpioa);
-    let mut cal_buf = [0u8; 16];
-    norflash.read_bytes(0xF210, &mut cal_buf);
-    writeln!(dbg, "norflash cal block @0xf210: {:02x?}", cal_buf).ok();
+    let norflash = norflash::NorFlash::new(flash_spi, gpioa);
 
-    let xtal_adjust = cal_buf[6];
-    rfic.set_xtal_adjust(xtal_adjust);
-    writeln!(dbg, "xtal_adjust = {}", xtal_adjust).ok();
-
-    rfic.set_audio_calibration(cal_buf[0], cal_buf[1], cal_buf[3], cal_buf[4]);
-    rfic.apply_af_calibration(
-        &mut cp.SYST,
-        cal_buf[11],
-        cal_buf[12],
-        cal_buf[13],
-        cal_buf[14],
-    );
-    writeln!(
-        dbg,
-        "audio cal: mic_depth={} cts_depth={} vol_wide={} vol_narrow={} af_rx=({},{}) af_tx=({},{})",
-        cal_buf[0], cal_buf[1], cal_buf[3], cal_buf[4], cal_buf[11], cal_buf[12], cal_buf[13], cal_buf[14]
-    )
-    .ok();
-
-    const DEFAULT_POWER: fd6818::Power = fd6818::Power::Low;
-    if let Some(pa_addr) = fd6818::Fd6818::pa_target_addr(DEFAULT_FREQ_HZ, DEFAULT_POWER) {
-        let mut pa_byte = [0u8; 1];
-        norflash.read_bytes(pa_addr, &mut pa_byte);
-        rfic.set_pa_calibration(pa_byte[0]);
-        writeln!(dbg, "pa_target @0x{:04x} = {}", pa_addr, pa_byte[0]).ok();
-    }
-
+    let rfic = fd6818::Fd6818::new(gpiob);
     let radio = radio::Radio::new(
         rfic,
         gpioa,
@@ -265,7 +261,7 @@ fn main() -> ! {
             freq_hz: DEFAULT_FREQ_HZ,
             tx_freq_hz: DEFAULT_FREQ_HZ,
             wide_band: true,
-            power: DEFAULT_POWER,
+            power: fd6818::Power::Low,
             subaudio_tx: fd6818::SubAudio::None,
             subaudio_rx: fd6818::SubAudio::None,
         },
@@ -279,7 +275,7 @@ fn main() -> ! {
             freq_hz: DEFAULT_FREQ_HZ,
             tx_freq_hz: DEFAULT_FREQ_HZ,
             wide_band: true,
-            power: DEFAULT_POWER,
+            power: fd6818::Power::Low,
             subaudio_tx: fd6818::SubAudio::None,
             subaudio_rx: fd6818::SubAudio::Ctcss(885),
         },
@@ -299,6 +295,11 @@ fn main() -> ! {
     let mut debouncer = Debouncer::new(board::read_ptt(gpioa));
 
     const BATT_ADC_CHANNEL: u8 = 1;
+    const VOX_ADC_CHANNEL: u8 = 0;
+
+    let mut audio_open = false;
+    let mut applied_contrast: u8 = u8::MAX;
+    let mut mic_peak: u8 = 0;
 
     loop {
         let due = scheduler.tick();
@@ -332,8 +333,32 @@ fn main() -> ! {
 
         app.poll_tot(&mut cp.SYST);
 
+        let mic_level = (batt_adc.read_channel(VOX_ADC_CHANNEL) >> 4) as u8;
+        mic_peak = mic_peak.max(mic_level);
+        app.poll_vox(&mut cp.SYST, mic_level, audio_open);
+
+        if due.every_100ms {
+            if app.vox_enabled() {
+                writeln!(
+                    dbg,
+                    "VOX mic: {} ch0: {} (peak {})",
+                    mic_level,
+                    mic_peak,
+                    batt_adc.read_channel(0)
+                )
+                .ok();
+            }
+            mic_peak = 0;
+            app.poll_auto_lock(&mut cp.SYST, audio_open);
+        }
+
+        if due.every_50ms && applied_contrast != app.contrast() {
+            lcd = apply_lcd_contrast(lcd, app.contrast());
+            applied_contrast = app.contrast();
+        }
+
         if !app.is_transmitting() {
-            let audio_open = app.radio.poll_squelch(&mut cp.SYST, 3);
+            audio_open = app.radio.poll_squelch(&mut cp.SYST, 3);
             app.poll_dual_standby(&mut cp.SYST, app.radio.rssi_open());
 
             if due.every_50ms {

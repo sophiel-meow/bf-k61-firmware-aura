@@ -46,6 +46,7 @@ impl KeyId {
                 | KeyId::Pound
                 | KeyId::Digit0
                 | KeyId::Digit8
+                | KeyId::Digit9 // for testing
                 | KeyId::Exit
                 | KeyId::Side1
                 | KeyId::Side2

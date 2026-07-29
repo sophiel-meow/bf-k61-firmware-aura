@@ -42,6 +42,7 @@ pub struct Radio<'a> {
     tail_elimination: bool,
     beeps_enabled: bool,
     roger_beep: bool,
+    scramble_level: u8,
 
     /// Whether `REG_AF_OUT` is currently routed to `RxAudio` (vs `Mute`).
     /// the chip's own squelch decision (`REG 0x78`) doesn't touch this
@@ -71,6 +72,7 @@ impl<'a> Radio<'a> {
             tail_elimination: true,
             beeps_enabled: true,
             roger_beep: false,
+            scramble_level: 0,
             audio_open: false,
             sq_debounce: 0,
             rssi_open: false,
@@ -132,6 +134,33 @@ impl<'a> Radio<'a> {
         self.roger_beep = enabled;
     }
 
+    /// Voice-inversion scramble group, 0 (off) - 3. Re-applied on every
+    /// `enter_rx`/`enter_tx` and after any tone burst, since it shares
+    /// `REG_TONE_FREQ` with the single-tone oscillator and would otherwise
+    /// go silently stale once a beep/roger tone clobbers that register.
+    pub fn set_scramble_level(&mut self, syst: &mut SYST, level: u8) {
+        self.scramble_level = level;
+        self.fd6818.set_scramble(syst, level);
+    }
+
+    /// Transmits a DTMF digit string over RF. Caller is responsible for
+    /// having TX already keyed; PTT state is left untouched.
+    pub fn send_dtmf_digits(&mut self, syst: &mut SYST, digits: &[u8]) {
+        const LEAD_IN_MS: u32 = 100;
+        const TONE_MS: u32 = 80;
+        const GAP_MS: u32 = 80;
+        self.fd6818.enter_dtmf_mode(syst, true);
+        delay::ms(syst, LEAD_IN_MS);
+        for &digit in digits {
+            self.fd6818.set_dtmf_digit(syst, Some(digit));
+            delay::ms(syst, TONE_MS);
+            self.fd6818.set_dtmf_digit(syst, None);
+            delay::ms(syst, GAP_MS);
+        }
+        self.fd6818.exit_dtmf_mode(syst);
+        self.fd6818.set_scramble(syst, self.scramble_level);
+    }
+
     /// Local-only UI key-beep: doesn't key the transmitter.
     pub fn play_beep(&mut self, syst: &mut SYST) {
         if !self.beeps_enabled || self.audio_open {
@@ -139,6 +168,9 @@ impl<'a> Radio<'a> {
         }
         board::set_speaker_switch(self.gpiob, true);
         self.play_tone_sequence(syst, &BEEP_TONES, false);
+        // Back to the squelch-driven state (closed, or the beep wouldn't
+        // have played) so the VOX mic preamp stays alive.
+        board::set_speaker_switch(self.gpiob, self.audio_open);
     }
 
     /// Two-tone "roger beep", transmitted over RF right after PTT release
@@ -165,10 +197,22 @@ impl<'a> Radio<'a> {
             AfOutState::Mute
         };
         self.fd6818.set_af_out(syst, state, self.cfg.wide_band);
+        self.fd6818.set_scramble(syst, self.scramble_level);
     }
 
-    pub fn squelch_open(&mut self, syst: &mut SYST) -> bool {
-        self.fd6818.squelch_open(syst)
+    /// Starts the repeater-access tone (`hz_div_10`, e.g. 175 = 1750Hz)
+    /// going out over RF. Only meaningful while TX is already keyed,
+    /// the tone replaces the mic path until `rtone_off`.
+    pub fn rtone_on(&mut self, syst: &mut SYST, hz_div_10: u16) {
+        self.fd6818.tx_single_tone_on(syst, hz_div_10, true);
+    }
+
+    /// Ends the access-tone burst and returns to ordinary TX audio. The
+    /// scrambler shares `REG_TONE_FREQ` with the tone oscillator, so it has
+    /// to be restored after the tone register was clobbered.
+    pub fn rtone_off(&mut self, syst: &mut SYST) {
+        self.fd6818.tx_single_tone_off(syst, true);
+        self.fd6818.set_scramble(syst, self.scramble_level);
     }
 
     pub fn rssi_open(&self) -> bool {
@@ -181,6 +225,7 @@ impl<'a> Radio<'a> {
             self.sq_debounce = 0;
             self.fd6818
                 .set_af_out(syst, AfOutState::Mute, self.cfg.wide_band);
+            board::set_speaker_switch(self.gpiob, false);
             return false;
         }
 
@@ -199,7 +244,7 @@ impl<'a> Radio<'a> {
 
         let tone_ok = match self.cfg.subaudio_rx {
             SubAudio::None => true,
-            SubAudio::Ctcss(_) => self.fd6818.subaudio_matched(syst),
+            SubAudio::Ctcss(_) | SubAudio::Dcs { .. } => self.fd6818.subaudio_matched(syst),
         };
         let open = rssi_open && tone_ok;
         if open != self.audio_open {
@@ -213,6 +258,7 @@ impl<'a> Radio<'a> {
                     AfOutState::Mute
                 };
                 self.fd6818.set_af_out(syst, state, self.cfg.wide_band);
+                board::set_speaker_switch(self.gpiob, open);
             }
         } else {
             self.sq_debounce = 0;
@@ -227,7 +273,9 @@ impl<'a> Radio<'a> {
     pub fn enter_rx(&mut self, syst: &mut SYST) {
         self.fd6818.idle(syst);
         self.fd6818.pa_off(syst);
-        self.fd6818.set_scramble_off(syst);
+        self.fd6818.set_tx_band_off(syst);
+        self.fd6818.power_rx(syst);
+        self.fd6818.set_scramble(syst, self.scramble_level);
         self.fd6818.set_frequency_hz(syst, self.cfg.freq_hz);
         self.fd6818.set_wide_bandwidth(syst, self.cfg.wide_band);
         self.fd6818
@@ -251,7 +299,7 @@ impl<'a> Radio<'a> {
             Band::Uhf => board::set_rx_band_uhf(self.gpioa),
             Band::Vhf => board::set_rx_band_vhf(self.gpioa),
         }
-        board::set_speaker_switch(self.gpiob, true);
+        board::set_speaker_switch(self.gpiob, false);
     }
 
     pub fn enter_tx(&mut self, syst: &mut SYST) {
@@ -263,7 +311,7 @@ impl<'a> Radio<'a> {
         self.fd6818.set_frequency_hz(syst, self.cfg.tx_freq_hz);
         self.fd6818.set_wide_bandwidth(syst, self.cfg.wide_band);
         self.fd6818.set_subaudio_tx(syst, self.cfg.subaudio_tx);
-        self.fd6818.set_scramble_off(syst);
+        self.fd6818.set_scramble(syst, self.scramble_level);
         self.fd6818.apply_tx_mic_gain(syst);
         self.fd6818.tx_on(syst);
         self.fd6818.pa_enable(syst, self.cfg.power);

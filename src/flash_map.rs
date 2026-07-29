@@ -304,8 +304,10 @@ pub struct Settings {
     pub busy_lock: bool,
     /// `txForbid`: global TX inhibit.
     pub tx_forbid: bool,
-    /// `keyAutoLock`: automatically lock the keypad after idling.
-    pub key_auto_lock: bool,
+    /// `keyAutoLock`: idle time before the keypad locks itself. The menu
+    /// presents this as OFF/5S/10S/15S; the stored value is the index,
+    /// 0 (off) - 3. Lock delay is `value * 5` seconds.
+    pub key_auto_lock: u8,
     /// `dualRxFlag` != 0: dual-standby enabled.
     pub dual_standby: bool,
     /// `voxSwitch`.
@@ -320,6 +322,13 @@ pub struct Settings {
     /// release. (
     /// TODO: `txOffTone == 2`, MDC1200 signaling, isn't implemented.
     pub roger_beep: bool,
+    /// `scarmble`: voice-inversion scramble group, 0 (off) - 3.
+    pub scramble_level: u8,
+    /// LCD electronic-volume level, 0-4
+    pub contrast: u8,
+    /// Repeater-access tone selection, 0-3: which single tone a side-key
+    /// press sends during TX. 1000/1450/1750/2100 Hz; default is 1750 Hz.
+    pub rtone: u8,
 }
 
 impl Settings {
@@ -328,44 +337,55 @@ impl Settings {
         tail_elimination: true,
         busy_lock: false,
         tx_forbid: false,
-        key_auto_lock: false,
+        key_auto_lock: 0,
         dual_standby: true,
         vox_switch: false,
-        vox_level: 0,
+        vox_level: 1,
         tot_level: 8,
         beeps_switch: true,
         roger_beep: false,
+        scramble_level: 0,
+        contrast: 2,
+        rtone: 2,
     };
 
-    pub fn from_bytes(buf: &[u8; 11]) -> Settings {
+    pub fn from_bytes(buf: &[u8; 16]) -> Settings {
         Settings {
             sql_level: buf[0],
             tail_elimination: buf[1] != 0,
             busy_lock: buf[2] != 0,
             tx_forbid: buf[3] != 0,
-            key_auto_lock: buf[4] != 0,
+            key_auto_lock: buf[4].min(3),
             dual_standby: buf[5] != 0,
             vox_switch: buf[6] != 0,
-            vox_level: buf[7],
+            vox_level: buf[7].clamp(1, 9),
             tot_level: buf[8],
             beeps_switch: buf[9] != 0,
             roger_beep: buf[10] != 0,
+            scramble_level: buf[11],
+            contrast: buf[12].min(4),
+            rtone: buf[13].min(3),
         }
     }
 
-    pub fn to_bytes(&self) -> [u8; 11] {
+    pub fn to_bytes(&self) -> [u8; 16] {
         [
             self.sql_level,
             self.tail_elimination as u8,
             self.busy_lock as u8,
             self.tx_forbid as u8,
-            self.key_auto_lock as u8,
+            self.key_auto_lock,
             self.dual_standby as u8,
             self.vox_switch as u8,
             self.vox_level,
             self.tot_level,
             self.beeps_switch as u8,
             self.roger_beep as u8,
+            self.scramble_level,
+            self.contrast,
+            self.rtone,
+            0,
+            0,
         ]
     }
 

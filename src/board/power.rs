@@ -34,3 +34,10 @@ pub fn init_battery_adc_pin(gpioa: &gpioa::RegisterBlock) {
         .moder()
         .modify(|_, w| unsafe { w.moder1().bits(0b11) }); // analog
 }
+
+/// VOX mic level sense: PA0, ADC1 channel 0
+pub fn init_vox_adc_pin(gpioa: &gpioa::RegisterBlock) {
+    gpioa
+        .moder()
+        .modify(|_, w| unsafe { w.moder0().bits(0b11) }); // analog
+}

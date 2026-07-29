@@ -68,6 +68,20 @@ const REG_STATUS: u8 = 0x0C;
 const STATUS_SQ_OPEN: u16 = 0x0002;
 const STATUS_SUBAUDIO_MATCH: u16 = 0x0400;
 const STATUS_TAIL_DETECTED: u16 = 0x0800;
+const STATUS_DCS_MATCH_NORMAL: u16 = 0x4000;
+const STATUS_DCS_MATCH_INVERTED: u16 = 0x8000;
+
+/// REG 0x08: the encoded 23-bit DCS/CDCSS bitstream, written as two 12-bit
+/// halves (low half first, high half with bit15 set as a "this is the high
+/// half" flag).
+const REG_DCS_DATA: u8 = 0x08;
+/// Standard DCS/CDCSS Golay(23,12) FEC generator constant
+const DCS_GOLAY_POLY: u16 = 0x0C75;
+/// `REG_SUBAUDIO_FREQ` value for the DCS/CDCSS bitstream's fixed 134.4 bit/s
+/// clock: same frequency-word formula as a CTCSS tone (`tenths_hz *
+/// 206489/100000`) evaluated at 134.4Hz, i.e. the digital-squelch baud rate
+/// riding on the same register bank as the analog tone would.
+const DCS_BAUD_WORD: u16 = 0x0AD7;
 
 const SUBAUDIO_TAIL_WORD: u16 = 0x01CD | 0x2000;
 /// REG 0x07 **bank0** (bit13=0), same 55.1Hz tone as the bank1 constant
@@ -124,8 +138,10 @@ pub enum Power {
     High,
 }
 
-/// Flash base address of each power level's APC target table
-const PA_TABLE_BASE: [u32; 3] = [0xF000, 0xF040, 0xF080]; // High, Mid, Low
+/// Flash base address of each power level's APC target table.
+const PA_TABLE_BASE_HIGH: u32 = 0xF000;
+const PA_TABLE_BASE_MID: u32 = 0xF040;
+const PA_TABLE_BASE_LOW: u32 = 0xF080;
 
 /// DTMF Goertzel-style coefficient table.
 /// Same physical register (0x09) is
@@ -137,6 +153,9 @@ const DTMF_COEF_TABLE: [u16; 16] = [
     0xC0E4, 0xD0CB, 0xE0B5, 0xF09F,
 ];
 
+/// REG 0x72: FSK baud-rate select while in FSK work mode, or the DTMF
+/// tone-2 frequency word while in DTMF work mode, same physical register,
+/// meaning depends on which mode `REG_WORK_MODE` currently selects.
 const REG_FSK_BAUD: u8 = 0x72;
 const REG_FSK_5C: u8 = 0x5C;
 const REG_FSK_5D: u8 = 0x5D;
@@ -144,6 +163,65 @@ const FSK_BAUD_1200: u16 = 0x3065; // <<1 for 2400
 const FSK_5C_VALUE: u16 = 0x5665;
 /// `(FSK_LEN * 2 - 1) << 8`, FSK_LEN = 8
 const FSK_5D_VALUE: u16 = 0x0F00; // 0d15<<8 =0b0000_1111 << 8 = 0x0F00
+
+/// REG 0x3F: baseband work-mode select (which special demod/mod block is
+/// active). `REG_STATUS` (0x0C) bit0 is the shared "new data ready"
+/// interrupt flag for whichever of these is currently selected.
+const REG_WORK_MODE: u8 = 0x3F;
+const WORK_MODE_DTMF: u16 = 0x0800;
+const WORK_MODE_FSK_RX: u16 = 0x2000;
+const WORK_MODE_FSK_TX_IRQ: u16 = 0x8000;
+/// REG 0x02: write 0 to clear the pending work-mode interrupt flag.
+const REG_INT_CLEAR: u8 = 0x02;
+
+/// REG 0x24: DTMF decoder enable/threshold. bits[12:7] = detect threshold
+/// (0..63); base value leaves the rest at the chip's documented defaults.
+const REG_DTMF_ENABLE: u8 = 0x24;
+const DTMF_ENABLE_BASE: u16 = 0x807F;
+const DTMF_THRESHOLD: u16 = 20;
+/// REG 0x0B[11:8]: last decoded DTMF digit nibble (keypad order: 0-9, then
+/// A-D, then *, #, matching `DTMF_KEYPAD`'s index order).
+const REG_DTMF_RESULT: u8 = 0x0B;
+/// Fixed TX gain for the dual-tone oscillator while dialing DTMF (tone1
+/// bits[14:8], tone2/FSK bits[6:0]).
+const DTMF_TX_GAIN: u16 = 0xE0E0;
+
+/// Standard telephone DTMF row/column tone pairs (Hz) for keypad digits in
+/// `0..=9, A..=D, *, #` order -- the public DTMF standard, identical on
+/// every phone and radio that supports it, not specific to this hardware.
+const DTMF_KEYPAD: [(u16, u16); 16] = [
+    (941, 1336), // 0
+    (697, 1209), // 1
+    (697, 1336), // 2
+    (697, 1477), // 3
+    (770, 1209), // 4
+    (770, 1336), // 5
+    (770, 1477), // 6
+    (852, 1209), // 7
+    (852, 1336), // 8
+    (852, 1477), // 9
+    (697, 1633), // A
+    (770, 1633), // B
+    (852, 1633), // C
+    (941, 1633), // D
+    (941, 1209), // *
+    (941, 1477), // #
+];
+
+/// REG 0x58/0x59/0x5A-0x5D/0x5F: generic raw FSK modem (preamble, sync,
+/// framing length, and the TX/RX FIFO). Shared substrate for any
+/// byte-oriented FSK signaling; the DTMF/single-tone oscillator lives on
+/// different registers entirely.
+const REG_FSK_PREAMBLE: u8 = 0x58;
+const REG_FSK_CONTROL: u8 = 0x59;
+const REG_FSK_FIFO: u8 = 0x5F;
+const FSK_CONTROL_BASE: u16 = 0x0028;
+const FSK_CONTROL_RX_FIFO_CLEAR: u16 = 0x4000;
+const FSK_CONTROL_TX_FIFO_CLEAR: u16 = 0x8000;
+const FSK_CONTROL_RX_EN: u16 = 0x1000;
+const FSK_CONTROL_TX_EN: u16 = 0x0800;
+/// Raw FSK word count per frame (8 x 16-bit words = 16 bytes).
+const FSK_FRAME_LEN: usize = 8;
 
 const REG_AF_TX_3K: u8 = 0x74;
 const REG_AF_TX_300_D1: u8 = 0x44;
@@ -201,7 +279,31 @@ pub enum SubAudio {
     None,
     /// Analog CTCSS tone, in tenths of Hz (e.g. `1000` = 100.0Hz).
     Ctcss(u16),
+    /// Digital-coded squelch. `code` is the plain-binary DCS tone value
+    /// (see `DCS_TABLE`, e.g. `0o023`); `inverted` selects the "I" (inverted
+    /// polarity) vs "N" (normal) variant.
+    Dcs {
+        code: u16,
+        inverted: bool,
+    },
 }
+
+/// Which status-register bit means "sub-audio matched" for the currently
+/// configured RX sub-audio kind, CTCSS and the two DCS polarities each use
+/// a different bit of `REG_STATUS`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SubaudioMatchBit {
+    Ctcss,
+    DcsNormal,
+    DcsInverted,
+}
+
+/// Voice-inversion scramble groups.
+/// FIXME: the 4th value
+const SCRAMBLE_TABLE: [u16; 3] = [0x8517, 0x770E, 0x7A90];
+/// `REG_DEVIATION` value while a scramble group is active (vs
+/// `DEVIATION_VALUE` normally).
+const DEVIATION_SCRAMBLE_VALUE: u16 = 0x0450;
 
 /// 26 MHz xtal calibration table
 /// The index is derived from the XTAL_ADJUST byte in spi flash
@@ -212,6 +314,9 @@ const XTAL_ADJUST_TABLE: [u32; 17] = [
 const XTAL_ADJUST_ZERO_POINT: u8 = 8;
 
 const POWER_UP_VALUE: u16 = 0x1D0F;
+/// RX-mode value for REG_POWER (0x37) — same base as `POWER_UP_VALUE` but
+/// with BIT9 (0x200) set
+const POWER_RX_VALUE: u16 = 0x1F0F;
 /// dev_sh=0x4, dev_lvl=0xE0, GAIN = (256 + 224) >> 4 = 30.
 const DEVIATION_VALUE: u16 = 0x04E0;
 const MIC_SENS_VALUE: u16 = 0xE952;
@@ -225,7 +330,9 @@ pub struct Fd6818<'a> {
     vol_narrowband: u8,
     mic_mod_depth: u8,
     cts_mod_depth: u8,
+    dcs_mod_depth: u8,
     pa_target: u8,
+    rx_match_bit: SubaudioMatchBit,
 }
 
 impl<'a> Fd6818<'a> {
@@ -237,7 +344,9 @@ impl<'a> Fd6818<'a> {
             vol_narrowband: 25,
             mic_mod_depth: 0,
             cts_mod_depth: 0,
+            dcs_mod_depth: 0,
             pa_target: 100,
+            rx_match_bit: SubaudioMatchBit::Ctcss,
         }
     }
 
@@ -250,7 +359,11 @@ impl<'a> Fd6818<'a> {
     /// at the given power level.
     /// Only U_400/V_136/V_200 bands are actually calibrated
     pub fn pa_target_addr(freq_hz: u32, power: Power) -> Option<u32> {
-        let base = PA_TABLE_BASE[power as usize];
+        let base = match power {
+            Power::High => PA_TABLE_BASE_HIGH,
+            Power::Mid => PA_TABLE_BASE_MID,
+            Power::Low => PA_TABLE_BASE_LOW,
+        };
         let mhz = freq_hz / 1_000_000;
         if freq_hz >= 400_000_000 {
             Some(base + (mhz - 400) / 10)
@@ -293,6 +406,15 @@ impl<'a> Fd6818<'a> {
         self.set_gpio_bit(syst, GPIO3, true);
     }
 
+    /// Releases both TX band-path GPIOs.
+    ///
+    /// Has to happen on the way back to RX: these stay latched at whatever
+    /// `set_tx_band_*` left them, and leaving the transmit path asserted
+    pub fn set_tx_band_off(&mut self, syst: &mut SYST) {
+        self.set_gpio_bit(syst, GPIO2, false);
+        self.set_gpio_bit(syst, GPIO3, false);
+    }
+
     /// Red TX indicator LED
     pub fn set_tx_led(&mut self, syst: &mut SYST, on: bool) {
         self.set_gpio_bit(syst, GPIO5, on);
@@ -323,17 +445,20 @@ impl<'a> Fd6818<'a> {
     }
 
     /// Calibration bytes from the flash block at 0xF210 : offset 0 is mic
-    /// modulation depth, offset 1 is CTCSS modulation depth, offsets 3/4 are
-    /// wideband/narrowband AF volume (max 31 each).
+    /// modulation depth, offset 1 is CTCSS modulation depth, offset 2 is DCS
+    /// modulation depth, offsets 3/4 are wideband/narrowband AF volume (max
+    /// 31 each).
     pub fn set_audio_calibration(
         &mut self,
         mic_mod_depth: u8,
         cts_mod_depth: u8,
+        dcs_mod_depth: u8,
         vol_wideband: u8,
         vol_narrowband: u8,
     ) {
         self.mic_mod_depth = mic_mod_depth;
         self.cts_mod_depth = cts_mod_depth;
+        self.dcs_mod_depth = dcs_mod_depth;
         self.vol_wideband = vol_wideband;
         self.vol_narrowband = vol_narrowband;
     }
@@ -359,8 +484,11 @@ impl<'a> Fd6818<'a> {
         );
         self.set_af_out(syst, AfOutState::Beep, true);
 
-        let reg = (hz_div_10 as u32 * 1_032_444 / 10_000) as u16;
-        self.write_reg(syst, REG_TONE_FREQ, reg);
+        self.write_reg(
+            syst,
+            REG_TONE_FREQ,
+            Self::tone_reg_word(hz_div_10 as u32 * 10),
+        );
     }
 
     /// Stops the tone and falls back to plain RX or TX
@@ -372,6 +500,193 @@ impl<'a> Fd6818<'a> {
         } else {
             self.rx_on(syst);
         }
+    }
+
+    /// `REG_TONE_FREQ`/`REG_FSK_BAUD`'s frequency-word encoding when used as
+    /// the single-tone oscillator or DTMF's dual-tone generator: `hz *
+    /// 1032444 / 100000`, `hz` in whole Hz
+    fn tone_reg_word(hz: u32) -> u16 {
+        (hz * 1_032_444 / 100_000) as u16
+    }
+
+    /// `REG_SUBAUDIO_FREQ`'s frequency-word encoding for an analog CTCSS
+    /// tone or the DCS/CDCSS bitstream's fixed baud clock: `tenths_hz *
+    /// 206489 / 100000`.
+    fn subaudio_reg_word(tenths_hz: u16) -> u16 {
+        ((tenths_hz as u32 * 206_489) / 100_000) as u16
+    }
+
+    /// Standard DCS/CDCSS Golay(23,12) forward-error-correction encode.
+    /// `code` is the plain-binary DCS tone value (bits 0-8ish, e.g. from
+    /// `DCS_TABLE`); bit 11 is the format's fixed "always high" framing bit.
+    /// Returns the 23-bit codeword the chip expects on `REG_DCS_DATA`.
+    fn dcs_encode(code: u16) -> u32 {
+        let source = code | 0x0800;
+        let mut remainder: u16 = 0;
+        let mut bit: u16 = 1;
+        for _ in 0..12 {
+            let source_bit = source & bit != 0;
+            let remainder_bit = remainder & 0x0002 != 0;
+            let feedback = if source_bit == remainder_bit {
+                0
+            } else {
+                DCS_GOLAY_POLY
+            };
+            bit <<= 1;
+            remainder >>= 1;
+            remainder ^= feedback;
+        }
+        (source as u32) | ((remainder as u32) << 11)
+    }
+
+    fn write_dcs_codeword(&mut self, syst: &mut SYST, code: u16) {
+        let word = Self::dcs_encode(code);
+        self.write_reg(syst, REG_DCS_DATA, (word & 0x0FFF) as u16);
+        self.write_reg(
+            syst,
+            REG_DCS_DATA,
+            (((word >> 12) & 0x0FFF) as u16) | 0x8000,
+        );
+    }
+
+    /// Selects a voice-inversion scramble group. `group == 0` turns
+    /// scrambling off; `1..=3` selects a group
+    pub fn set_scramble(&mut self, syst: &mut SYST, group: u8) {
+        let scramble_reg = self.read_reg(syst, REG_SCRAMBLE);
+        if group == 0 {
+            self.write_reg(syst, REG_SCRAMBLE, scramble_reg & !0x0002);
+            let dev = self.read_reg(syst, REG_DEVIATION) & 0xF000;
+            self.write_reg(syst, REG_DEVIATION, dev | DEVIATION_VALUE);
+        } else {
+            let idx = (group.min(3) - 1) as usize;
+            self.write_reg(syst, REG_SCRAMBLE, scramble_reg | 0x0002);
+            self.write_reg(syst, REG_TONE_FREQ, SCRAMBLE_TABLE[idx]);
+            let dev = self.read_reg(syst, REG_DEVIATION) & 0xF000;
+            self.write_reg(syst, REG_DEVIATION, dev | DEVIATION_SCRAMBLE_VALUE);
+        }
+    }
+
+    /// Enters DTMF work mode. `tx = true` also sets the fixed encode gain,
+    /// for dialing digits with `set_dtmf_digit`; `tx = false` is for
+    /// decode-only (RX) use with `dtmf_digit_ready`/`read_dtmf_digit`.
+    pub fn enter_dtmf_mode(&mut self, syst: &mut SYST, tx: bool) {
+        self.write_reg(
+            syst,
+            REG_DTMF_ENABLE,
+            DTMF_ENABLE_BASE | (DTMF_THRESHOLD << 7),
+        );
+        if tx {
+            self.write_reg(syst, REG_TONE_GAIN, DTMF_TX_GAIN);
+        }
+        self.write_reg(syst, REG_WORK_MODE, WORK_MODE_DTMF);
+    }
+
+    pub fn exit_dtmf_mode(&mut self, syst: &mut SYST) {
+        let temp = self.read_reg(syst, REG_DTMF_ENABLE) & 0xFFDF;
+        self.write_reg(syst, REG_DTMF_ENABLE, temp);
+        self.write_reg(syst, REG_TONE_GAIN, 0x0000);
+    }
+
+    /// Drives (or silences, with `None`) the DTMF dual-tone oscillator for
+    /// one keypad digit
+    pub fn set_dtmf_digit(&mut self, syst: &mut SYST, digit: Option<u8>) {
+        let (tone1, tone2) = match digit {
+            Some(d) => DTMF_KEYPAD[(d & 0x0F) as usize],
+            None => (0, 0),
+        };
+        let word1 = if tone1 == 0 {
+            0
+        } else {
+            Self::tone_reg_word(tone1 as u32)
+        };
+        let word2 = if tone2 == 0 {
+            0
+        } else {
+            Self::tone_reg_word(tone2 as u32)
+        };
+        self.write_reg(syst, REG_TONE_FREQ, word1);
+        self.write_reg(syst, REG_FSK_BAUD, word2);
+    }
+
+    /// True once a new decoded DTMF digit is ready (RX use)
+    pub fn dtmf_digit_ready(&mut self, syst: &mut SYST) -> bool {
+        if self.read_reg(syst, REG_WORK_MODE) & WORK_MODE_DTMF == 0 {
+            return false;
+        }
+        if self.read_reg(syst, REG_STATUS) & 0x0001 != 0 {
+            self.write_reg(syst, REG_INT_CLEAR, 0x0000);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Last decoded DTMF digit nibble, in `DTMF_KEYPAD` order.
+    pub fn read_dtmf_digit(&mut self, syst: &mut SYST) -> u8 {
+        ((self.read_reg(syst, REG_DTMF_RESULT) >> 8) & 0x0F) as u8
+    }
+
+    /// Enables the raw FSK modem for byte-oriented framed TX/RX (the
+    /// generic substrate; not a protocol encoder by itself)
+    pub fn enter_fsk_mode(&mut self, syst: &mut SYST) {
+        self.write_reg(syst, REG_FSK_PREAMBLE, 0x00C1);
+        self.write_reg(syst, REG_TONE_GAIN, 0x00E0);
+        self.write_reg(syst, REG_FSK_BAUD, FSK_BAUD_1200);
+        self.write_reg(syst, REG_FSK_5C, FSK_5C_VALUE);
+        self.write_reg(syst, REG_FSK_5D, FSK_5D_VALUE);
+        self.write_reg(
+            syst,
+            REG_FSK_CONTROL,
+            FSK_CONTROL_BASE | FSK_CONTROL_RX_FIFO_CLEAR,
+        );
+        self.write_reg(syst, REG_FSK_CONTROL, FSK_CONTROL_BASE | FSK_CONTROL_RX_EN);
+        self.write_reg(syst, REG_WORK_MODE, WORK_MODE_FSK_RX);
+    }
+
+    pub fn exit_fsk_mode(&mut self, syst: &mut SYST) {
+        self.write_reg(syst, REG_TONE_GAIN, 0x0000);
+        self.write_reg(syst, REG_FSK_PREAMBLE, 0x0000);
+    }
+
+    /// Transmits one raw `FSK_FRAME_LEN`-word (16-byte) frame through the
+    /// modem's FIFO and blocks until the chip reports it sent (or ~1s
+    /// elapses without an ack)
+    pub fn fsk_transmit(&mut self, syst: &mut SYST, data: &[u16; FSK_FRAME_LEN]) {
+        self.write_reg(syst, REG_WORK_MODE, WORK_MODE_FSK_TX_IRQ);
+        self.write_reg(
+            syst,
+            REG_FSK_CONTROL,
+            FSK_CONTROL_BASE | FSK_CONTROL_TX_FIFO_CLEAR,
+        );
+        self.write_reg(syst, REG_FSK_CONTROL, FSK_CONTROL_BASE);
+        for &word in data.iter() {
+            self.write_reg(syst, REG_FSK_FIFO, word);
+        }
+        self.write_reg(syst, REG_FSK_CONTROL, FSK_CONTROL_BASE | FSK_CONTROL_TX_EN);
+        for _ in 0..200 {
+            delay::ms(syst, 5);
+            if self.read_reg(syst, REG_STATUS) & 0x0001 != 0 {
+                break;
+            }
+        }
+        self.write_reg(syst, REG_INT_CLEAR, 0x0000);
+        self.write_reg(syst, REG_WORK_MODE, 0x0000);
+        self.write_reg(syst, REG_FSK_CONTROL, FSK_CONTROL_BASE);
+    }
+
+    /// True once a full raw FSK frame is ready to read.
+    pub fn fsk_rx_ready(&mut self, syst: &mut SYST) -> bool {
+        self.read_reg(syst, REG_WORK_MODE) & WORK_MODE_FSK_RX != 0
+            && self.read_reg(syst, REG_STATUS) & 0x0001 != 0
+    }
+
+    pub fn fsk_receive(&mut self, syst: &mut SYST) -> [u16; FSK_FRAME_LEN] {
+        let mut data = [0u16; FSK_FRAME_LEN];
+        for slot in data.iter_mut() {
+            *slot = self.read_reg(syst, REG_FSK_FIFO);
+        }
+        self.write_reg(syst, REG_INT_CLEAR, 0x0000);
+        data
     }
 
     /// Selects what REG 0x47 routes to the audio-out pin and switches
@@ -406,11 +721,11 @@ impl<'a> Fd6818<'a> {
         self.write_reg(syst, REG_MIC_SENS, (MIC_SENS_VALUE & 0xFFE0) | gain);
     }
 
-    /// Configures the transmitted sub-audible tone
+    /// Configures the transmitted sub-audible tone/code.
     ///
-    /// `REG_CTCSS` (0x51): bit15 `subau_en`, bit12 `ctc_dcs_sel` (1=CTCSS),
-    /// bits[6:0] `subau_gain`
-    /// TODO: DCS
+    /// `REG_CTCSS` (0x51): bit15 `subau_en`, bit13 `dcs_polarity` (1=
+    /// inverted), bit12 `ctc_dcs_sel` (1=CTCSS, 0=DCS), bits[6:0]
+    /// `subau_gain`.
     pub fn set_subaudio_tx(&mut self, syst: &mut SYST, sub: SubAudio) {
         match sub {
             SubAudio::None => {
@@ -422,11 +737,18 @@ impl<'a> Fd6818<'a> {
                 // datasheet: ctc_freq = freq_Hz * 2^27/6500000; tenths_hz
                 // is freq*10, so this is (tenths_hz/10)*20.6489 rearranged
                 // to avoid the intermediate fraction.
-                let word = ((tenths_hz as u32 * 206_489) / 100_000) as u16;
+                let word = Self::subaudio_reg_word(tenths_hz);
                 self.write_reg(syst, REG_SUBAUDIO_FREQ, word & 0x1FFF);
 
                 self.write_reg(syst, REG_SUBAUDIO_FREQ, SUBAUDIO_TAIL_WORD);
                 self.write_reg(syst, REG_SUBAUDIO_THRESH, SUBAUDIO_THRESH_VALUE);
+            }
+            SubAudio::Dcs { code, inverted } => {
+                let gain = (self.dcs_mod_depth & 0x7F) as u16;
+                let mask = if inverted { 0xA000 } else { 0x8000 };
+                self.write_reg(syst, REG_CTCSS, mask | gain);
+                self.write_reg(syst, REG_SUBAUDIO_FREQ, DCS_BAUD_WORD);
+                self.write_dcs_codeword(syst, code);
             }
         }
     }
@@ -442,16 +764,33 @@ impl<'a> Fd6818<'a> {
     }
 
     pub fn enable_rx_subaudio(&mut self, syst: &mut SYST, sub: SubAudio) {
-        let primary_tenths_hz = match sub {
-            SubAudio::Ctcss(tenths_hz) => tenths_hz,
-            SubAudio::None => 551, // 55.1Hz — same as the fixed tail tone
-        };
-        let gain = (self.cts_mod_depth & 0x7F) as u16;
-        self.write_reg(syst, REG_CTCSS, 0x9000 | gain);
-        let primary_word = ((primary_tenths_hz as u32 * 206_489) / 100_000) as u16;
-        self.write_reg(syst, REG_SUBAUDIO_FREQ, primary_word & 0x1FFF);
-        self.write_reg(syst, REG_SUBAUDIO_FREQ, SUBAUDIO_TAIL_WORD);
-        self.write_reg(syst, REG_SUBAUDIO_THRESH, SUBAUDIO_THRESH_VALUE);
+        match sub {
+            SubAudio::Dcs { code, inverted } => {
+                self.rx_match_bit = if inverted {
+                    SubaudioMatchBit::DcsInverted
+                } else {
+                    SubaudioMatchBit::DcsNormal
+                };
+                let gain = (self.dcs_mod_depth & 0x7F) as u16;
+                let mask = if inverted { 0xA000 } else { 0x8000 };
+                self.write_reg(syst, REG_CTCSS, mask | gain);
+                self.write_reg(syst, REG_SUBAUDIO_FREQ, DCS_BAUD_WORD);
+                self.write_dcs_codeword(syst, code);
+            }
+            _ => {
+                self.rx_match_bit = SubaudioMatchBit::Ctcss;
+                let primary_tenths_hz = match sub {
+                    SubAudio::Ctcss(tenths_hz) => tenths_hz,
+                    _ => 551, // 55.1Hz — same as the fixed tail tone
+                };
+                let gain = (self.cts_mod_depth & 0x7F) as u16;
+                self.write_reg(syst, REG_CTCSS, 0x9000 | gain);
+                let primary_word = Self::subaudio_reg_word(primary_tenths_hz);
+                self.write_reg(syst, REG_SUBAUDIO_FREQ, primary_word & 0x1FFF);
+                self.write_reg(syst, REG_SUBAUDIO_FREQ, SUBAUDIO_TAIL_WORD);
+                self.write_reg(syst, REG_SUBAUDIO_THRESH, SUBAUDIO_THRESH_VALUE);
+            }
+        }
     }
 
     pub fn tail_detected(&mut self, syst: &mut SYST) -> bool {
@@ -459,7 +798,13 @@ impl<'a> Fd6818<'a> {
     }
 
     pub fn subaudio_matched(&mut self, syst: &mut SYST) -> bool {
-        self.read_reg(syst, REG_STATUS) & STATUS_SUBAUDIO_MATCH != 0
+        let status = self.read_reg(syst, REG_STATUS);
+        let bit = match self.rx_match_bit {
+            SubaudioMatchBit::Ctcss => STATUS_SUBAUDIO_MATCH,
+            SubaudioMatchBit::DcsNormal => STATUS_DCS_MATCH_NORMAL,
+            SubaudioMatchBit::DcsInverted => STATUS_DCS_MATCH_INVERTED,
+        };
+        status & bit != 0
     }
 
     pub fn set_squelch_level(&mut self, syst: &mut SYST, freq_hz: u32, level: u8) {
@@ -495,12 +840,9 @@ impl<'a> Fd6818<'a> {
         self.write_reg(syst, REG_POWER, POWER_UP_VALUE);
     }
 
-    pub fn set_scramble_off(&mut self, syst: &mut SYST) {
-        let scramble = self.read_reg(syst, REG_SCRAMBLE) & !0x0002;
-        self.write_reg(syst, REG_SCRAMBLE, scramble);
-
-        let dev = self.read_reg(syst, REG_DEVIATION) & 0xF000;
-        self.write_reg(syst, REG_DEVIATION, dev | DEVIATION_VALUE);
+    /// Sets REG_POWER (0x37) to the RX-specific value (`0x1F0F`, with BIT9).
+    pub fn power_rx(&mut self, syst: &mut SYST) {
+        self.write_reg(syst, REG_POWER, POWER_RX_VALUE);
     }
 
     /// (d1, d2) register payload for one AF response trim step.

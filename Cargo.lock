@@ -3,6 +3,22 @@
 version = 4
 
 [[package]]
+name = "aura"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "cortex-m-rt",
+ "display-interface",
+ "display-interface-spi",
+ "embedded-graphics",
+ "embedded-hal 1.0.0",
+ "embedded-hal-bus",
+ "kd32f328-pac",
+ "panic-halt",
+ "st7565",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -21,22 +37,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5deb64efa5bd81e31fcd1938615a6d98c82eafcbcd787162b6f63b91d6bac5b3"
 dependencies = [
  "rustc_version",
-]
-
-[[package]]
-name = "bfk6-fw"
-version = "0.1.0"
-dependencies = [
- "cortex-m",
- "cortex-m-rt",
- "display-interface",
- "display-interface-spi",
- "embedded-graphics",
- "embedded-hal 1.0.0",
- "embedded-hal-bus",
- "kd32f328-pac",
- "panic-halt",
- "st7565",
 ]
 
 [[package]]

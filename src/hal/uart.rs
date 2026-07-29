@@ -5,7 +5,6 @@ pub struct DebugUart<'a> {
 }
 
 impl<'a> DebugUart<'a> {
-
     /// pclk_hz: bus freq (APB2 for USART1)
     /// OVER8 == 0 (16x oversampling)
     pub fn new(regs: &'a usart1::RegisterBlock, pclk_hz: u32, baud: u32) -> Self {
@@ -31,9 +30,12 @@ impl<'a> DebugUart<'a> {
 
     pub fn write_byte(&mut self, byte: u8) {
         while self.regs.isr().read().txe().bit_is_clear() {}
-        self.regs.tdr().write(|w| unsafe { w.tdr().bits(byte as u16) });
+        self.regs
+            .tdr()
+            .write(|w| unsafe { w.tdr().bits(byte as u16) });
     }
 
+    #[allow(dead_code)]
     pub fn write_bytes(&mut self, bytes: &[u8]) {
         for &b in bytes {
             self.write_byte(b);
@@ -43,7 +45,12 @@ impl<'a> DebugUart<'a> {
 
 impl core::fmt::Write for DebugUart<'_> {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        self.write_bytes(s.as_bytes());
+        for &b in s.as_bytes() {
+            if b == b'\n' {
+                self.write_byte(b'\r');
+            }
+            self.write_byte(b);
+        }
         Ok(())
     }
 }

@@ -1,12 +1,12 @@
 mod menu;
 
-use crate::drivers::fd6818::{Power, SubAudio};
+use crate::drivers::fd6818::{Fd6818, Power, SubAudio};
 use crate::drivers::keypad::{KeyEvent, KeyEventKind, KeyId, KeyManager};
 use crate::drivers::norflash::NorFlash;
 use crate::flash_map::{self, addr};
 use crate::hal::wear_leveled::WearLeveledRegion;
 use crate::radio::{ChannelConfig, Radio};
-use cortex_m::peripheral::{SYST, SCB};
+use cortex_m::peripheral::{SCB, SYST};
 use menu::MenuItem;
 
 const FIRMWARE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -24,6 +24,34 @@ const DUAL_STANDBY_HOLD_TICKS: u16 = 10;
 /// The scheduler ticks every 10ms.
 const TICKS_PER_SECOND: u16 = 100;
 
+/// VOX mic-level thresholds, indexed directly by the menu's `vox_level`
+/// (1-9): level 1 is the most sensitive. The original's own default maps
+/// to level 1 here (its `voxLevel` defaults to 0, indexing entry 1 of this
+/// same table).
+const VOX_THRESHOLD_TABLE: [u8; 11] = [127, 52, 62, 72, 84, 95, 106, 117, 125, 132, 140];
+
+/// Once VOX has keyed TX, the release threshold drops by this much, so
+/// normal speech dynamics don't flap the transmitter on and off.
+const VOX_TX_HYSTERESIS: u8 = 8;
+
+/// VOX hang time after the last above-threshold sample, in 10ms ticks
+/// (1.0s). The original makes this a 0.5-2.0s setting (`voxDelay`,
+/// default 1.0s); we fix it at the default rather than spend another menu
+/// item on it.
+const VOX_WORK_HOLD_TICKS: u8 = 100;
+
+/// VOX hold-off (10ms ticks) after events whose audio tail would otherwise
+/// false-trigger: a received signal (1.5s), a key beep (0.4s), a failed TX
+/// entry (1.2s), or PTT release (1.0s).
+const VOX_HOLD_AFTER_RX_TICKS: u8 = 150;
+const VOX_HOLD_AFTER_KEY_TICKS: u8 = 40;
+const VOX_HOLD_AFTER_TX_FAIL_TICKS: u8 = 120;
+const VOX_HOLD_AFTER_PTT_TICKS: u8 = 100;
+
+/// Repeater-access tone choices for `settings.rtone`, in units of 10Hz:
+/// 1000/1450/1750/2100 Hz.
+const RTONE_HZ_DIV_10: [u16; 4] = [100, 145, 175, 210];
+
 /// Both VFO sides (A+B), combined into one wear-leveled record -- mirrors
 /// `Flash_SaveVfoData`/`Flash_ReadVfoData`'s single 64-byte payload.
 const VFO_REGION: WearLeveledRegion<64> = WearLeveledRegion::new(addr::VFO_INFO_ADDR, 16);
@@ -31,7 +59,7 @@ const VFO_REGION: WearLeveledRegion<64> = WearLeveledRegion::new(addr::VFO_INFO_
 /// Global settings record, at the same address and header size the original
 /// uses for `STR_RADIOINFORM` -- our payload is much smaller (see
 /// `flash_map::Settings`), so this leaves most of the sector's slots unused.
-const SETTINGS_REGION: WearLeveledRegion<11> = WearLeveledRegion::new(addr::RADIO_IMFOS_ADDR, 16);
+const SETTINGS_REGION: WearLeveledRegion<16> = WearLeveledRegion::new(addr::RADIO_IMFOS_ADDR, 16);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -55,9 +83,19 @@ enum ChVfoMode {
 
 fn subaudio_from_code(code: u16) -> SubAudio {
     match flash_map::SubaudioCode::decode(code) {
+        flash_map::SubaudioCode::None => SubAudio::None,
         flash_map::SubaudioCode::Ctcss(tenths_hz) => SubAudio::Ctcss(tenths_hz),
-        // TODO: DCS isn't implemented in the fd6818 driver yet.
-        _ => SubAudio::None,
+        flash_map::SubaudioCode::DcsNormal(idx) => dcs_from_table_index(idx, false),
+        flash_map::SubaudioCode::DcsInverted(idx) => dcs_from_table_index(idx - 105, true),
+    }
+}
+
+/// `idx` is the 1-based `SubaudioCode` index (1..=105); out-of-range values
+/// (malformed flash data) fall back to off rather than panicking.
+fn dcs_from_table_index(idx: u16, inverted: bool) -> SubAudio {
+    match menu::DCS_TABLE.get((idx as usize).wrapping_sub(1)) {
+        Some(&code) => SubAudio::Dcs { code, inverted },
+        None => SubAudio::None,
     }
 }
 
@@ -173,22 +211,64 @@ fn subaudio_to_code(sub: SubAudio) -> u16 {
     match sub {
         SubAudio::None => 0,
         SubAudio::Ctcss(tenths_hz) => tenths_hz,
+        SubAudio::Dcs { code, inverted } => match menu::dcs_index(code) {
+            Some(i) => {
+                let one_based = i as u16 + 1;
+                if inverted {
+                    one_based + 105
+                } else {
+                    one_based
+                }
+            }
+            None => 0,
+        },
     }
 }
 
-fn subaudio_ctcss_hz(sub: SubAudio) -> Option<u16> {
-    match sub {
-        SubAudio::Ctcss(tenths_hz) => Some(tenths_hz),
-        SubAudio::None => None,
-    }
-}
+/// Combined CTCSS/DCS selector index space for the merged R-CTC/T-CTC menu
+/// item: `-1` = off, `0..CTCSS_TABLE.len()` = CTCSS tones, then
+/// `DCS_TABLE.len()` DCS-normal codes, then `DCS_TABLE.len()` DCS-inverted
+/// codes.
+const SUBAUDIO_MAX_INDEX: i32 = (menu::CTCSS_TABLE.len() + 2 * menu::DCS_TABLE.len() - 1) as i32;
 
-/// `v < 0` means off.
-fn ctcss_from_index(v: i32) -> SubAudio {
+fn subaudio_from_index(v: i32) -> SubAudio {
     if v < 0 {
-        SubAudio::None
+        return SubAudio::None;
+    }
+    let v = v as usize;
+    if v < menu::CTCSS_TABLE.len() {
+        return SubAudio::Ctcss(menu::CTCSS_TABLE[v]);
+    }
+    let dcs_v = v - menu::CTCSS_TABLE.len();
+    if dcs_v < menu::DCS_TABLE.len() {
+        SubAudio::Dcs {
+            code: menu::DCS_TABLE[dcs_v],
+            inverted: false,
+        }
     } else {
-        SubAudio::Ctcss(menu::CTCSS_TABLE[v as usize])
+        let inv_v = (dcs_v - menu::DCS_TABLE.len()).min(menu::DCS_TABLE.len() - 1);
+        SubAudio::Dcs {
+            code: menu::DCS_TABLE[inv_v],
+            inverted: true,
+        }
+    }
+}
+
+fn subaudio_index(sub: SubAudio) -> i32 {
+    match sub {
+        SubAudio::None => -1,
+        SubAudio::Ctcss(hz) => match menu::ctcss_index(Some(hz)) {
+            Some(i) => i as i32,
+            None => -1,
+        },
+        SubAudio::Dcs { code, inverted } => match menu::dcs_index(code) {
+            Some(i) => {
+                let base =
+                    menu::CTCSS_TABLE.len() + if inverted { menu::DCS_TABLE.len() } else { 0 };
+                (base + i) as i32
+            }
+            None => -1,
+        },
     }
 }
 
@@ -288,6 +368,19 @@ pub struct App<'a> {
     dual_standby: bool,
     dual_hold_ticks: u16,
     tot_ticks: u16,
+
+    /// Idle countdown (100ms ticks) toward the automatic key lock, reloaded
+    /// from `settings.key_auto_lock * 50` on any user activity.
+    key_idle_ticks: u16,
+    /// VOX hold-off before detection resumes, 10ms ticks.
+    vox_det_dly: u8,
+    /// VOX TX hang time remaining, 10ms ticks.
+    vox_work_dly: u8,
+    /// True while the transmitter is keyed by VOX rather than the PTT key,
+    /// so `poll_vox` knows it's the one responsible for unkeying.
+    vox_active: bool,
+    /// Access tone currently sounding (side key held during TX).
+    rtone_sounding: bool,
 }
 
 impl<'a> App<'a> {
@@ -298,6 +391,30 @@ impl<'a> App<'a> {
         default_cfg: ChannelConfig,
         syst: &mut SYST,
     ) -> Self {
+        // --- RF chip init and factory calibration ---
+        radio.init(syst);
+
+        let mut cal_buf = [0u8; 16];
+        norflash.read_bytes(addr::RF_MODULATION_ADDR, &mut cal_buf);
+        let xtal_adjust = cal_buf[6];
+        radio.fd6818_mut().set_xtal_adjust(xtal_adjust);
+        radio
+            .fd6818_mut()
+            .set_audio_calibration(cal_buf[0], cal_buf[1], cal_buf[2], cal_buf[3], cal_buf[4]);
+        radio.fd6818_mut().apply_af_calibration(
+            syst,
+            cal_buf[11],
+            cal_buf[12],
+            cal_buf[13],
+            cal_buf[14],
+        );
+
+        if let Some(pa_addr) = Fd6818::pa_target_addr(default_cfg.freq_hz, default_cfg.power) {
+            let mut pa_byte = [0u8; 1];
+            norflash.read_bytes(pa_addr, &mut pa_byte);
+            radio.fd6818_mut().set_pa_calibration(pa_byte[0]);
+        }
+
         let vfo_payload = VFO_REGION.load(&mut norflash);
         let settings = SETTINGS_REGION
             .load(&mut norflash)
@@ -351,6 +468,7 @@ impl<'a> App<'a> {
         radio.set_tail_elimination(settings.tail_elimination);
         radio.set_beeps_enabled(settings.beeps_switch);
         radio.set_roger_beep(settings.roger_beep);
+        radio.set_scramble_level(syst, settings.scramble_level);
 
         App {
             radio,
@@ -369,6 +487,11 @@ impl<'a> App<'a> {
             dual_standby: settings.dual_standby,
             dual_hold_ticks: DUAL_STANDBY_HOLD_TICKS,
             tot_ticks: 0,
+            key_idle_ticks: 0,
+            vox_det_dly: 0,
+            vox_work_dly: 0,
+            vox_active: false,
+            rtone_sounding: false,
         }
     }
 
@@ -518,6 +641,103 @@ impl<'a> App<'a> {
         self.sync_watching_to_master(syst);
     }
 
+    /// Bench-test hook: keys PTT on the master side and sends DTMF "123"
+    /// over RF, for checking the DTMF encoder against a real decoder.
+    /// Long-press Digit9 in standby.
+    fn test_send_dtmf(&mut self, syst: &mut SYST) {
+        self.set_ptt(syst, true);
+        self.radio.send_dtmf_digits(syst, &[1, 2, 3]);
+        self.set_ptt(syst, false);
+    }
+
+    /// Reloads the auto-lock idle countdown. Called on any user activity
+    /// (key event, PTT edge, leaving the menu); the countdown itself only
+    /// runs while idle in standby, see `poll_auto_lock`.
+    fn reset_key_idle(&mut self) {
+        self.key_idle_ticks = self.settings.key_auto_lock as u16 * 50;
+    }
+
+    /// Auto key lock countdown. Call every 100ms. The timer only runs down
+    /// while the radio is genuinely idle -- sitting in standby, not
+    /// transmitting, no signal open -- so it can't lock the keys out from
+    /// under an ongoing contact. `rx_active` is the squelch/audio-open
+    /// state from the main loop.
+    pub fn poll_auto_lock(&mut self, syst: &mut SYST, rx_active: bool) {
+        if self.settings.key_auto_lock == 0
+            || self.key_lock
+            || self.mode != Mode::Standby
+            || self.transmitting
+            || rx_active
+        {
+            return;
+        }
+        if self.key_idle_ticks > 0 {
+            self.key_idle_ticks -= 1;
+            if self.key_idle_ticks == 0 {
+                self.key_lock = true;
+                self.radio.play_beep(syst);
+            }
+        }
+    }
+
+    /// VOX detector. Call every 10ms with the mic level (12-bit ADC
+    /// reading shifted down to 8 bits) and the current audio-open state.
+    ///
+    /// Above `VOX_THRESHOLD_TABLE[vox_level]`, the hang timer reloads
+    /// and (in RX) the transmitter keys; once the timer runs out, VOX
+    /// unkeys again -- but only a TX it keyed itself (`vox_active`), never
+    /// a manual PTT. After events with an audio tail (received signal, key
+    /// beep, PTT release) detection holds off for a while so the tail
+    /// doesn't retrigger it.
+    pub fn poll_vox(&mut self, syst: &mut SYST, mic_level: u8, rx_active: bool) {
+        if self.vox_det_dly > 0 {
+            self.vox_det_dly -= 1;
+        }
+        if self.vox_work_dly > 0 {
+            self.vox_work_dly -= 1;
+        }
+
+        if !self.settings.vox_switch {
+            return;
+        }
+        // Menu (or any non-standby mode) and a just-received signal both
+        // hold detection off; `rx_active` is only meaningful in RX, since
+        // the main loop stops refreshing it while transmitting.
+        if self.mode != Mode::Standby || (!self.transmitting && rx_active) {
+            self.vox_det_dly = VOX_HOLD_AFTER_RX_TICKS;
+            return;
+        }
+        if self.vox_det_dly != 0 {
+            return;
+        }
+
+        let level = self.settings.vox_level.clamp(1, 9) as usize;
+        let mut threshold = VOX_THRESHOLD_TABLE[level];
+        if self.transmitting {
+            threshold = threshold.saturating_sub(VOX_TX_HYSTERESIS);
+        }
+
+        if mic_level > threshold {
+            self.vox_work_dly = VOX_WORK_HOLD_TICKS;
+            if !self.transmitting {
+                self.set_ptt(syst, true);
+                if self.transmitting {
+                    self.vox_active = true;
+                } else {
+                    // TXINH/BCL refused the key-up; back off briefly
+                    // instead of retrying on every tick.
+                    self.vox_det_dly = VOX_HOLD_AFTER_TX_FAIL_TICKS;
+                    self.vox_work_dly = 0;
+                }
+            }
+        }
+
+        if self.vox_active && self.vox_work_dly == 0 {
+            self.vox_active = false;
+            self.set_ptt(syst, false);
+        }
+    }
+
     fn dispatch_key(&mut self, syst: &mut SYST, ev: KeyEvent) {
         // everything except the side keys and long-press unlock is swallowed
         // while locked.
@@ -525,6 +745,19 @@ impl<'a> App<'a> {
             && !matches!(ev.key, KeyId::Side1 | KeyId::Side2)
             && !matches!((ev.key, ev.kind), (KeyId::Asterisk, KeyEventKind::Long))
         {
+            return;
+        }
+
+        self.reset_key_idle();
+        // The beep's audio tail would otherwise false-trigger VOX on the
+        // next detection window.
+        self.vox_det_dly = VOX_HOLD_AFTER_KEY_TICKS;
+
+        // While transmitting, the keypad does nothing but the access-tone
+        // burst on Side2 -- the ordinary standby handlers must not retune
+        // or reorder anything underneath an in-progress TX.
+        if self.transmitting && self.mode == Mode::Standby {
+            self.dispatch_key_tx(syst, ev);
             return;
         }
 
@@ -537,6 +770,29 @@ impl<'a> App<'a> {
             Mode::Standby => self.dispatch_key_standby(syst, ev),
             Mode::Menu => self.dispatch_key_menu(syst, ev),
             // TODO: Fm/Scan/Search/... aren't implemented yet.
+            _ => {}
+        }
+    }
+
+    /// Key handling while PTT is held: holding Side2 sounds the
+    /// repeater-access tone selected by `settings.rtone` until release.
+    /// Everything else is ignored on purpose.
+    fn dispatch_key_tx(&mut self, syst: &mut SYST, ev: KeyEvent) {
+        if ev.key != KeyId::Side2 {
+            return;
+        }
+        match ev.kind {
+            KeyEventKind::Press => {
+                let idx = self.settings.rtone.min(3) as usize;
+                self.radio.rtone_on(syst, RTONE_HZ_DIV_10[idx]);
+                self.rtone_sounding = true;
+            }
+            KeyEventKind::Release => {
+                if self.rtone_sounding {
+                    self.radio.rtone_off(syst);
+                    self.rtone_sounding = false;
+                }
+            }
             _ => {}
         }
     }
@@ -579,6 +835,7 @@ impl<'a> App<'a> {
             KeyEventKind::Long => match ev.key {
                 KeyId::Asterisk => self.key_lock = !self.key_lock,
                 KeyId::Digit8 => self.toggle_power(syst),
+                KeyId::Digit9 => self.test_send_dtmf(syst),
                 // TODO: Search/lock-display/weather/dual-standby/monitor remaps
                 // all target modes that aren't built yet.
                 _ => {}
@@ -646,6 +903,9 @@ impl<'a> App<'a> {
         self.save_settings();
         self.save_vfo();
         self.mode = Mode::Standby;
+        // Back to standby with a fresh idle window so the keys don't lock
+        // the moment the menu closes.
+        self.reset_key_idle();
     }
 
     fn factory_reset(&mut self) -> ! {
@@ -667,16 +927,16 @@ impl<'a> App<'a> {
             MenuItem::Roge => self.settings.roger_beep as i32,
             MenuItem::Wn => !side.cfg.wide_band as i32,
             MenuItem::TxPr => matches!(side.cfg.power, Power::Low) as i32,
-            MenuItem::RxCts => match menu::ctcss_index(subaudio_ctcss_hz(side.cfg.subaudio_rx)) {
-                Some(i) => i as i32,
-                None => -1,
-            },
-            MenuItem::TxCts => match menu::ctcss_index(subaudio_ctcss_hz(side.cfg.subaudio_tx)) {
-                Some(i) => i as i32,
-                None => -1,
-            },
+            MenuItem::RxCts => subaudio_index(side.cfg.subaudio_rx),
+            MenuItem::TxCts => subaudio_index(side.cfg.subaudio_tx),
+            MenuItem::Scrm => self.settings.scramble_level as i32,
             MenuItem::Sftd => side.freq_dir as i32,
             MenuItem::Offse => side.offset_hz as i32,
+            MenuItem::AutoLk => self.settings.key_auto_lock as i32,
+            MenuItem::Vox => self.settings.vox_switch as i32,
+            MenuItem::VoxLv => self.settings.vox_level as i32,
+            MenuItem::Rtone => self.settings.rtone as i32,
+            MenuItem::Contrast => self.settings.contrast as i32,
             MenuItem::Info => self.menu.info_page as i32,
             _ => 0,
         }
@@ -698,9 +958,13 @@ impl<'a> App<'a> {
             | MenuItem::Roge
             | MenuItem::Wn
             | MenuItem::TxPr => 1 - cur,
-            MenuItem::RxCts | MenuItem::TxCts => {
-                wrap_step(cur, up, -1, menu::CTCSS_TABLE.len() as i32 - 1)
-            }
+            MenuItem::RxCts | MenuItem::TxCts => wrap_step(cur, up, -1, SUBAUDIO_MAX_INDEX),
+            MenuItem::Scrm => clamp_step(cur, up, 0, 3),
+            MenuItem::AutoLk => clamp_step(cur, up, 0, 3),
+            MenuItem::Vox => 1 - cur,
+            MenuItem::VoxLv => clamp_step(cur, up, 1, 9),
+            MenuItem::Rtone => clamp_step(cur, up, 0, 3),
+            MenuItem::Contrast => clamp_step(cur, up, 0, 4),
             MenuItem::Offse => {
                 if up {
                     cur.saturating_add(side_step_hz as i32)
@@ -744,12 +1008,16 @@ impl<'a> App<'a> {
                 self.commit_side_change(syst);
             }
             MenuItem::RxCts => {
-                self.sides[self.master].cfg.subaudio_rx = ctcss_from_index(v);
+                self.sides[self.master].cfg.subaudio_rx = subaudio_from_index(v);
                 self.commit_side_change(syst);
             }
             MenuItem::TxCts => {
-                self.sides[self.master].cfg.subaudio_tx = ctcss_from_index(v);
+                self.sides[self.master].cfg.subaudio_tx = subaudio_from_index(v);
                 self.commit_side_change(syst);
+            }
+            MenuItem::Scrm => {
+                self.settings.scramble_level = v as u8;
+                self.radio.set_scramble_level(syst, v as u8);
             }
             MenuItem::Sftd => {
                 self.sides[self.master].freq_dir = v as u8;
@@ -759,6 +1027,23 @@ impl<'a> App<'a> {
                 self.sides[self.master].offset_hz = v as u32;
                 self.commit_side_change(syst);
             }
+            MenuItem::AutoLk => {
+                self.settings.key_auto_lock = v as u8;
+                self.reset_key_idle();
+            }
+            MenuItem::Vox => {
+                self.settings.vox_switch = v != 0;
+                if v == 0 && self.vox_active {
+                    // Don't leave a VOX-keyed transmitter stranded with no
+                    // owner to unkey it.
+                    self.vox_active = false;
+                    self.vox_work_dly = 0;
+                    self.set_ptt(syst, false);
+                }
+            }
+            MenuItem::VoxLv => self.settings.vox_level = v as u8,
+            MenuItem::Rtone => self.settings.rtone = v as u8,
+            MenuItem::Contrast => self.settings.contrast = v as u8,
             _ => {}
         }
     }
@@ -809,7 +1094,11 @@ impl<'a> App<'a> {
                 let deci_hz = STEP_LIST_DECI_HZ[self.menu_current_value(item) as usize];
                 let _ = write!(w, "{}.{:02}k", deci_hz / 100, deci_hz % 100);
             }
-            MenuItem::Tdr | MenuItem::BusyLock | MenuItem::TxForbid | MenuItem::Beep | MenuItem::Roge => {
+            MenuItem::Tdr
+            | MenuItem::BusyLock
+            | MenuItem::TxForbid
+            | MenuItem::Beep
+            | MenuItem::Roge => {
                 let _ = write!(
                     w,
                     "{}",
@@ -819,6 +1108,33 @@ impl<'a> App<'a> {
                         "OFF"
                     }
                 );
+            }
+            MenuItem::AutoLk => {
+                let _ = write!(
+                    w,
+                    "{}",
+                    match self.menu_current_value(item) {
+                        1 => "5S",
+                        2 => "10S",
+                        3 => "15S",
+                        _ => "OFF",
+                    }
+                );
+            }
+            MenuItem::Vox => {
+                let _ = write!(
+                    w,
+                    "{}",
+                    if self.menu_current_value(item) != 0 {
+                        "ON"
+                    } else {
+                        "OFF"
+                    }
+                );
+            }
+            MenuItem::Rtone => {
+                let idx = self.menu_current_value(item).clamp(0, 3) as usize;
+                let _ = write!(w, "{}Hz", RTONE_HZ_DIV_10[idx] as u32 * 10);
             }
             MenuItem::Wn => {
                 let _ = write!(
@@ -843,12 +1159,30 @@ impl<'a> App<'a> {
                 );
             }
             MenuItem::RxCts | MenuItem::TxCts => {
+                let side = &self.sides[self.master];
+                let sub = if item == MenuItem::RxCts {
+                    side.cfg.subaudio_rx
+                } else {
+                    side.cfg.subaudio_tx
+                };
+                match sub {
+                    SubAudio::None => {
+                        let _ = write!(w, "OFF");
+                    }
+                    SubAudio::Ctcss(hz) => {
+                        let _ = write!(w, "{}.{}Hz", hz / 10, hz % 10);
+                    }
+                    SubAudio::Dcs { code, inverted } => {
+                        let _ = write!(w, "D{:03o}{}", code, if inverted { "I" } else { "N" });
+                    }
+                }
+            }
+            MenuItem::Scrm => {
                 let v = self.menu_current_value(item);
-                if v < 0 {
+                if v == 0 {
                     let _ = write!(w, "OFF");
                 } else {
-                    let hz = menu::CTCSS_TABLE[v as usize];
-                    let _ = write!(w, "{}.{}Hz", hz / 10, hz % 10);
+                    let _ = write!(w, "{}", v);
                 }
             }
             MenuItem::Offse => {
@@ -868,6 +1202,21 @@ impl<'a> App<'a> {
         }
     }
 
+    /// Re-reads the calibrated APC target byte for the frequency/power about
+    /// to be used and pushes it into the driver. `pa_target` only takes
+    /// effect on the next `pa_enable()` call, so this has to run before
+    /// every `enter_tx()` -- previously it was only ever loaded once, at
+    /// boot, for the startup default frequency/power, so every later TX
+    /// (any channel, either power level) silently kept using that one
+    /// stale value.
+    fn reload_pa_calibration(&mut self, tx_freq_hz: u32, power: Power) {
+        if let Some(addr) = Fd6818::pa_target_addr(tx_freq_hz, power) {
+            let mut buf = [0u8; 1];
+            self.norflash.read_bytes(addr, &mut buf);
+            self.radio.fd6818_mut().set_pa_calibration(buf[0]);
+        }
+    }
+
     pub fn set_ptt(&mut self, syst: &mut SYST, pressed: bool) {
         if pressed && !self.transmitting {
             if self.settings.tx_forbid {
@@ -880,19 +1229,40 @@ impl<'a> App<'a> {
             // TX on master side
             self.watching = self.master;
             let side = &self.sides[self.master];
+            let tx_freq_hz = side.cfg.tx_freq_hz;
+            let power = side.cfg.power;
             self.radio.set_frequency(side.cfg.freq_hz);
-            self.radio.set_tx_frequency(side.cfg.tx_freq_hz);
-            self.radio.set_power(side.cfg.power);
+            self.radio.set_tx_frequency(tx_freq_hz);
+            self.radio.set_power(power);
             self.radio.set_subaudio_tx(side.cfg.subaudio_tx);
             self.radio.set_subaudio_rx(side.cfg.subaudio_rx);
+
+            self.reload_pa_calibration(tx_freq_hz, power);
 
             self.transmitting = true;
             self.tot_ticks = 0;
             self.radio.enter_tx(syst);
+        } else if pressed {
+            // A physical PTT press landing while VOX holds the transmitter
+            // means the user takes over; VOX must not unkey under their
+            // thumb.
+            self.vox_active = false;
+            self.vox_work_dly = 0;
         } else if !pressed && self.transmitting {
             self.transmitting = false;
+            if self.rtone_sounding {
+                // TX is about to be torn down anyway; just stop tracking
+                // the tone so a later key release doesn't "restore" TX
+                // state into what is now RX.
+                self.rtone_sounding = false;
+            }
             self.radio.end_tx(syst);
             self.dual_hold_ticks = DUAL_STANDBY_HOLD_TICKS;
+            // Hold VOX off for a moment: the TX tail (roger beep, tail
+            // elimination) would otherwise immediately retrigger it.
+            self.vox_det_dly = VOX_HOLD_AFTER_PTT_TICKS;
+            self.vox_work_dly = 0;
+            self.vox_active = false;
         }
     }
 
@@ -912,6 +1282,20 @@ impl<'a> App<'a> {
 
     pub fn is_transmitting(&self) -> bool {
         self.transmitting
+    }
+
+    pub fn is_key_locked(&self) -> bool {
+        self.key_lock
+    }
+
+    /// LCD contrast (electronic volume) level, 0-4. main.rs applies it to
+    /// the display controller whenever it changes.
+    pub fn contrast(&self) -> u8 {
+        self.settings.contrast
+    }
+
+    pub fn vox_enabled(&self) -> bool {
+        self.settings.vox_switch
     }
 
     pub fn master_index(&self) -> usize {
