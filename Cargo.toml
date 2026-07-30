@@ -19,6 +19,7 @@ display-interface = "0.5"
 display-interface-spi = "0.5"
 st7565 = "0.6"
 embedded-graphics = "0.8"
+profont = "0.7"
 
 [profile.release]
 opt-level = "z"

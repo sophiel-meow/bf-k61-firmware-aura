@@ -46,7 +46,7 @@ impl KeyId {
                 | KeyId::Pound
                 | KeyId::Digit0
                 | KeyId::Digit8
-                | KeyId::Digit9 // for testing
+                | KeyId::Digit9
                 | KeyId::Exit
                 | KeyId::Side1
                 | KeyId::Side2
@@ -121,10 +121,10 @@ impl EventQueue {
     }
 }
 
-pub struct KeyManager<'a> {
-    gpiob: &'a gpiof::RegisterBlock,
-    gpioc: &'a gpiof::RegisterBlock,
-    gpiof: &'a gpiof::RegisterBlock,
+pub struct Keypad {
+    gpiob: &'static gpiof::RegisterBlock,
+    gpioc: &'static gpiof::RegisterBlock,
+    gpiof: &'static gpiof::RegisterBlock,
     raw_prev: Option<KeyId>,
     stable: Option<KeyId>,
     hold_ticks: u32,
@@ -132,13 +132,13 @@ pub struct KeyManager<'a> {
     queue: EventQueue,
 }
 
-impl<'a> KeyManager<'a> {
+impl Keypad {
     pub fn new(
-        gpiob: &'a gpiof::RegisterBlock,
-        gpioc: &'a gpiof::RegisterBlock,
-        gpiof: &'a gpiof::RegisterBlock,
+        gpiob: &'static gpiof::RegisterBlock,
+        gpioc: &'static gpiof::RegisterBlock,
+        gpiof: &'static gpiof::RegisterBlock,
     ) -> Self {
-        KeyManager {
+        Keypad {
             gpiob,
             gpioc,
             gpiof,
@@ -167,7 +167,7 @@ impl<'a> KeyManager<'a> {
 
     /// Scans the matrix once and updates debounce/long-press/repeat state,
     /// pushing any resulting events onto the internal queue. Call on a
-    /// steady ~10ms cadence (see module docs).
+    /// steady ~10ms cadence.
     pub fn poll(&mut self, syst: &mut SYST) {
         let raw = self.scan(syst);
 

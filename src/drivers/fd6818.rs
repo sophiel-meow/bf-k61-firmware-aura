@@ -138,11 +138,6 @@ pub enum Power {
     High,
 }
 
-/// Flash base address of each power level's APC target table.
-const PA_TABLE_BASE_HIGH: u32 = 0xF000;
-const PA_TABLE_BASE_MID: u32 = 0xF040;
-const PA_TABLE_BASE_LOW: u32 = 0xF080;
-
 /// DTMF Goertzel-style coefficient table.
 /// Same physical register (0x09) is
 /// written 16 times; the coefficient's table index is packed into the top
@@ -353,28 +348,6 @@ impl<'a> Fd6818<'a> {
     /// xtal calibration byte in flash (0xF210+6)
     pub fn set_xtal_adjust(&mut self, value: u8) {
         self.xtal_adjust = value;
-    }
-
-    /// Flash address holding the calibrated APC target byte for `freq_hz`
-    /// at the given power level.
-    /// Only U_400/V_136/V_200 bands are actually calibrated
-    pub fn pa_target_addr(freq_hz: u32, power: Power) -> Option<u32> {
-        let base = match power {
-            Power::High => PA_TABLE_BASE_HIGH,
-            Power::Mid => PA_TABLE_BASE_MID,
-            Power::Low => PA_TABLE_BASE_LOW,
-        };
-        let mhz = freq_hz / 1_000_000;
-        if freq_hz >= 400_000_000 {
-            Some(base + (mhz - 400) / 10)
-        } else if freq_hz >= 200_000_000 {
-            Some(base + 0x20 + (mhz - 200) / 5)
-        } else if freq_hz >= 130_000_000 {
-            let idx = ((mhz - 130) / 3).min(15);
-            Some(base + 0x10 + idx)
-        } else {
-            None
-        }
     }
 
     /// Calibrated APC target byte, read from flash at the address

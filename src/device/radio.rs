@@ -1,27 +1,96 @@
 use crate::board;
-use crate::drivers::fd6818::{AfOutState, Fd6818, Power, SubAudio};
-use crate::hal::delay;
+use crate::drivers::fd6818::{AfOutState, Fd6818};
+use crate::hal::{adc, debounce, delay};
 use cortex_m::peripheral::SYST;
 use kd32f328_pac::{gpioa, gpiof};
+
+pub use crate::drivers::fd6818::{Power, SubAudio};
 
 /// How long `end_tx()` holds the tail-elimination tone before actually
 /// cutting the carrier.
 const SEND_TAIL_HOLD_MS: u32 = 300;
 
 /// UI key-beep default tone sequence: 1500Hz/80ms then 450Hz/35ms
-/// (`hz_div_10`, `duration_ms`) pairs
 const BEEP_TONES: [(u16, u32); 2] = [(150, 80), (45, 35)];
 /// Roger-beep tone pair: 1000Hz then 850Hz, 80ms each
 const ROGER_TONES: [(u16, u32); 2] = [(100, 80), (85, 80)];
 
+/// ADC channel for VOX mic level (PA0 = ADC1 ch0).
+pub const VOX_ADC_CHANNEL: u8 = 0;
+/// ADC channel for battery voltage (PA1 = ADC1 ch1).
+pub const BATT_ADC_CHANNEL: u8 = 1;
+
+// TX frequency allow-list
+/// A closed frequency window in Hz: `[low_hz, high_hz]`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct FreqRange {
+    pub low_hz: u32,
+    pub high_hz: u32,
+}
+
+impl FreqRange {
+    pub const fn contains(&self, freq_hz: u32) -> bool {
+        freq_hz >= self.low_hz && freq_hz <= self.high_hz
+    }
+}
+
+const MAX_FREQ_RANGES: usize = 4;
+
+#[derive(Clone, Copy)]
+pub struct FreqRanges {
+    ranges: [FreqRange; MAX_FREQ_RANGES],
+    count: u8,
+}
+
+impl FreqRanges {
+    pub const fn empty() -> Self {
+        FreqRanges {
+            ranges: [FreqRange {
+                low_hz: 0,
+                high_hz: 0,
+            }; MAX_FREQ_RANGES],
+            count: 0,
+        }
+    }
+
+    pub fn from_slice(windows: &[FreqRange]) -> Self {
+        let mut out = Self::empty();
+        for &w in windows.iter().take(MAX_FREQ_RANGES) {
+            out.ranges[out.count as usize] = w;
+            out.count += 1;
+        }
+        out
+    }
+
+    /// The FD6818's own synthesizer capability
+    /// value from datasheet, may be different amoung chips
+    pub fn hardware() -> Self {
+        Self::from_slice(&[
+            FreqRange {
+                low_hz: 16_000_000,
+                high_hz: 560_000_000,
+            },
+            FreqRange {
+                low_hz: 740_000_000,
+                high_hz: 1_120_000_000,
+            },
+        ])
+    }
+
+    pub fn allows(&self, freq_hz: u32) -> bool {
+        self.ranges[..self.count as usize]
+            .iter()
+            .any(|r| r.contains(freq_hz))
+    }
+}
+
+// types
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Band {
     Vhf,
     Uhf,
 }
 
-// TODO: more channel field
-// TODO: VFO info
 #[derive(Clone, Copy)]
 pub struct ChannelConfig {
     pub freq_hz: u32,
@@ -32,10 +101,50 @@ pub struct ChannelConfig {
     pub subaudio_rx: SubAudio,
 }
 
-pub struct Radio<'a> {
-    fd6818: Fd6818<'a>,
-    gpioa: &'a gpioa::RegisterBlock,
-    gpiob: &'a gpiof::RegisterBlock,
+#[derive(Clone, Copy)]
+pub struct AniConfig {
+    pub machine_id: [u8; 3],
+    separator: u8,
+    group_code: Option<u8>,
+}
+
+/// Separator symbol table, indexed by the flash `separator` field (0-5):
+/// A, B, C, D, `*`, `#`.
+const SEPARATOR_SYMBOLS: [u8; 6] = [10, 11, 12, 13, 14, 15];
+/// Group-call symbol table, indexed by the flash `group_call` field (0-6):
+/// off, A, B, C, D, `*`, `#`.
+const GROUP_SYMBOLS: [Option<u8>; 7] = [
+    None,
+    Some(10),
+    Some(11),
+    Some(12),
+    Some(13),
+    Some(14),
+    Some(15),
+];
+
+impl AniConfig {
+    pub fn from_raw(machine_id: [u8; 3], separator_idx: u8, group_idx: u8) -> Self {
+        let separator_idx = if separator_idx > 5 { 4 } else { separator_idx };
+        let group_idx = if group_idx > 6 { 5 } else { group_idx };
+        AniConfig {
+            machine_id,
+            separator: SEPARATOR_SYMBOLS[separator_idx as usize],
+            group_code: GROUP_SYMBOLS[group_idx as usize],
+        }
+    }
+}
+
+const ANI_FRAME_LEN: usize = 7;
+const DTMF_RX_TIMEOUT_TICKS: u8 = 40;
+const DTMF_RX_MAX_DIGITS: usize = 16;
+
+pub struct Radio {
+    fd6818: Fd6818<'static>,
+    gpioa: &'static gpioa::RegisterBlock,
+    gpiob: &'static gpiof::RegisterBlock,
+    adc: adc::Adc<'static>,
+    ptt_debouncer: debounce::Debouncer,
     cfg: ChannelConfig,
 
     sql_level: u8,
@@ -44,30 +153,38 @@ pub struct Radio<'a> {
     roger_beep: bool,
     scramble_level: u8,
 
-    /// Whether `REG_AF_OUT` is currently routed to `RxAudio` (vs `Mute`).
-    /// the chip's own squelch decision (`REG 0x78`) doesn't touch this
-    /// register, so it's tracked and driven from here.
     audio_open: bool,
     sq_debounce: u8,
 
     rssi_open: bool,
     rssi_debounce: u8,
+
+    tx_state: bool,
+
+    ani: AniConfig,
+    dtmf_rx_buf: [u8; DTMF_RX_MAX_DIGITS],
+    dtmf_rx_len: u8,
+    dtmf_rx_timeout: u8,
+
+    tx_allowed: FreqRanges,
 }
 
-impl<'a> Radio<'a> {
+impl Radio {
     pub fn new(
-        fd6818: Fd6818<'a>,
-        gpioa: &'a gpioa::RegisterBlock,
-        gpiob: &'a gpiof::RegisterBlock,
+        fd6818: Fd6818<'static>,
+        gpioa: &'static gpioa::RegisterBlock,
+        gpiob: &'static gpiof::RegisterBlock,
+        adc_regs: &'static kd32f328_pac::adc::RegisterBlock,
         cfg: ChannelConfig,
+        ani: AniConfig,
     ) -> Self {
         Radio {
             fd6818,
             gpioa,
             gpiob,
+            adc: adc::Adc::new(adc_regs),
+            ptt_debouncer: debounce::Debouncer::new(board::read_ptt(gpioa)),
             cfg,
-            // FIXME: Overridden immediately by the caller once global settings
-            // are loaded; these are just placeholder startup values.
             sql_level: 3,
             tail_elimination: true,
             beeps_enabled: true,
@@ -77,18 +194,72 @@ impl<'a> Radio<'a> {
             sq_debounce: 0,
             rssi_open: false,
             rssi_debounce: 0,
+            tx_state: false,
+            ani,
+            dtmf_rx_buf: [0; DTMF_RX_MAX_DIGITS],
+            dtmf_rx_len: 0,
+            dtmf_rx_timeout: 0,
+            tx_allowed: FreqRanges::hardware(),
         }
     }
 
-    pub fn init(&mut self, syst: &mut SYST) {
-        self.fd6818.init(syst);
+    /// Cut all RF power immediately, for power-off.
+    pub fn rf_off(&mut self, syst: &mut SYST) {
+        self.fd6818.rf_off(syst);
     }
 
-    /// Escape hatch for calibration loading and register-level debug
-    pub fn fd6818_mut(&mut self) -> &mut Fd6818<'a> {
-        &mut self.fd6818
+    /// Load PA calibration for the given TX frequency+power from flash,
+    /// pushing it into the FD6818 driver. Returns `true` if a calibration
+    /// address was found.
+    pub fn apply_pa_calibration(
+        &mut self,
+        storage: &mut crate::device::storage::Storage,
+        freq_hz: u32,
+        power: Power,
+    ) -> bool {
+        if let Some(target) = storage.read_pa_calibration(freq_hz, power) {
+            self.fd6818.set_pa_calibration(target);
+            true
+        } else {
+            false
+        }
     }
 
+    pub fn set_tx_allowed(&mut self, ranges: FreqRanges) {
+        self.tx_allowed = ranges;
+    }
+
+    // ADC
+
+    /// 12-bit ADC reading for the VOX mic envelope (ch0), shifted down to
+    /// 8 bits
+    pub fn read_mic_level(&mut self) -> u8 {
+        (self.adc.read_channel(VOX_ADC_CHANNEL) >> 4) as u8
+    }
+
+    // #[allow(dead_code)]
+    // pub fn read_mic_raw(&mut self) -> u16 {
+    //     self.adc.read_channel(VOX_ADC_CHANNEL)
+    // }
+
+    pub fn read_battery_raw(&mut self) -> u16 {
+        self.adc.read_channel(BATT_ADC_CHANNEL)
+    }
+
+    // PTT
+
+    /// Poll the hardware PTT line. Returns `Some(true)` on press,
+    /// `Some(false)` on release, `None` when steady.
+    pub fn poll_ptt(&mut self) -> Option<bool> {
+        self.ptt_debouncer.sample(board::read_ptt(self.gpioa))
+    }
+
+    /// Raw PTT state, for power-on latch timing.
+    pub fn ptt_asserted(&self) -> bool {
+        !board::read_ptt(self.gpioa)
+    }
+
+    // band
     fn band(&self) -> Band {
         if self.cfg.freq_hz >= 300_000_000 {
             Band::Uhf
@@ -97,6 +268,7 @@ impl<'a> Radio<'a> {
         }
     }
 
+    // config setters
     pub fn set_frequency(&mut self, freq_hz: u32) {
         self.cfg.freq_hz = freq_hz;
     }
@@ -134,17 +306,12 @@ impl<'a> Radio<'a> {
         self.roger_beep = enabled;
     }
 
-    /// Voice-inversion scramble group, 0 (off) - 3. Re-applied on every
-    /// `enter_rx`/`enter_tx` and after any tone burst, since it shares
-    /// `REG_TONE_FREQ` with the single-tone oscillator and would otherwise
-    /// go silently stale once a beep/roger tone clobbers that register.
     pub fn set_scramble_level(&mut self, syst: &mut SYST, level: u8) {
         self.scramble_level = level;
         self.fd6818.set_scramble(syst, level);
     }
 
-    /// Transmits a DTMF digit string over RF. Caller is responsible for
-    /// having TX already keyed; PTT state is left untouched.
+    // DTMF
     pub fn send_dtmf_digits(&mut self, syst: &mut SYST, digits: &[u8]) {
         const LEAD_IN_MS: u32 = 100;
         const TONE_MS: u32 = 80;
@@ -159,23 +326,74 @@ impl<'a> Radio<'a> {
         }
         self.fd6818.exit_dtmf_mode(syst);
         self.fd6818.set_scramble(syst, self.scramble_level);
+        self.fd6818.enter_dtmf_mode(syst, false);
     }
 
-    /// Local-only UI key-beep: doesn't key the transmitter.
+    pub fn poll_dtmf(&mut self, syst: &mut SYST) -> Option<[u8; 3]> {
+        if !self.audio_open {
+            self.dtmf_rx_len = 0;
+            self.dtmf_rx_timeout = 0;
+            return None;
+        }
+
+        if self.fd6818.dtmf_digit_ready(syst) {
+            let digit = self.fd6818.read_dtmf_digit(syst);
+            let len = self.dtmf_rx_len as usize;
+            if len < DTMF_RX_MAX_DIGITS {
+                self.dtmf_rx_buf[len] = digit;
+                self.dtmf_rx_len += 1;
+            }
+            self.dtmf_rx_timeout = DTMF_RX_TIMEOUT_TICKS;
+            if self.dtmf_rx_len as usize >= DTMF_RX_MAX_DIGITS {
+                return self.finish_dtmf_frame();
+            }
+            return None;
+        }
+
+        if self.dtmf_rx_timeout > 0 {
+            self.dtmf_rx_timeout -= 1;
+            if self.dtmf_rx_timeout == 0 && self.dtmf_rx_len > 0 {
+                return self.finish_dtmf_frame();
+            }
+        }
+        None
+    }
+
+    fn finish_dtmf_frame(&mut self) -> Option<[u8; 3]> {
+        let len = self.dtmf_rx_len as usize;
+        self.dtmf_rx_len = 0;
+
+        if len != ANI_FRAME_LEN || self.dtmf_rx_buf[3] != self.ani.separator {
+            return None;
+        }
+        let call_code = [
+            self.dtmf_rx_buf[0],
+            self.dtmf_rx_buf[1],
+            self.dtmf_rx_buf[2],
+        ];
+        let is_individual = call_code == self.ani.machine_id;
+        let is_group = match self.ani.group_code {
+            Some(g) => call_code == [g, g, g],
+            None => false,
+        };
+        if !is_individual && !is_group {
+            return None;
+        }
+        let mut caller = [0u8; 3];
+        caller.copy_from_slice(&self.dtmf_rx_buf[4..7]);
+        Some(caller)
+    }
+
+    // tones
     pub fn play_beep(&mut self, syst: &mut SYST) {
         if !self.beeps_enabled || self.audio_open {
             return;
         }
         board::set_speaker_switch(self.gpiob, true);
         self.play_tone_sequence(syst, &BEEP_TONES, false);
-        // Back to the squelch-driven state (closed, or the beep wouldn't
-        // have played) so the VOX mic preamp stays alive.
         board::set_speaker_switch(self.gpiob, self.audio_open);
     }
 
-    /// Two-tone "roger beep", transmitted over RF right after PTT release
-    /// called from `end_tx()`, before tail-elimination/actually dropping
-    /// the carrier
     fn play_roger_tone(&mut self, syst: &mut SYST) {
         self.play_tone_sequence(syst, &ROGER_TONES, true);
     }
@@ -187,10 +405,6 @@ impl<'a> Radio<'a> {
         }
         self.fd6818.tx_single_tone_off(syst, key_tx);
 
-        // Tone playback silently overwrote REG_AF_OUT; restore it to
-        // whatever `poll_squelch()`'s last decision actually was, since that
-        // decision (`self.audio_open`) may not have changed and so
-        // wouldn't otherwise get re-applied.
         let state = if self.audio_open {
             AfOutState::RxAudio
         } else {
@@ -200,20 +414,16 @@ impl<'a> Radio<'a> {
         self.fd6818.set_scramble(syst, self.scramble_level);
     }
 
-    /// Starts the repeater-access tone (`hz_div_10`, e.g. 175 = 1750Hz)
-    /// going out over RF. Only meaningful while TX is already keyed,
-    /// the tone replaces the mic path until `rtone_off`.
     pub fn rtone_on(&mut self, syst: &mut SYST, hz_div_10: u16) {
         self.fd6818.tx_single_tone_on(syst, hz_div_10, true);
     }
 
-    /// Ends the access-tone burst and returns to ordinary TX audio. The
-    /// scrambler shares `REG_TONE_FREQ` with the tone oscillator, so it has
-    /// to be restored after the tone register was clobbered.
     pub fn rtone_off(&mut self, syst: &mut SYST) {
         self.fd6818.tx_single_tone_off(syst, true);
         self.fd6818.set_scramble(syst, self.scramble_level);
     }
+
+    // squelch / RSSI
 
     pub fn rssi_open(&self) -> bool {
         self.rssi_open
@@ -270,6 +480,11 @@ impl<'a> Radio<'a> {
         self.fd6818.get_rssi(syst)
     }
 
+    pub fn audio_is_open(&self) -> bool {
+        self.audio_open
+    }
+
+    // TX / RX state machine
     pub fn enter_rx(&mut self, syst: &mut SYST) {
         self.fd6818.idle(syst);
         self.fd6818.pa_off(syst);
@@ -283,10 +498,6 @@ impl<'a> Radio<'a> {
         self.fd6818.enable_rx_subaudio(syst, self.cfg.subaudio_rx);
         self.fd6818.rx_on(syst);
 
-        // Start muted; `poll_squelch()` is what actually opens audio, once
-        // REG 0x78's sq_out flag has had a chance to settle at the new
-        // frequency/threshold instead of momentarily passing through
-        // whatever the chip read right at retune.
         self.fd6818
             .set_af_out(syst, AfOutState::Mute, self.cfg.wide_band);
         self.audio_open = false;
@@ -300,9 +511,17 @@ impl<'a> Radio<'a> {
             Band::Vhf => board::set_rx_band_vhf(self.gpioa),
         }
         board::set_speaker_switch(self.gpiob, false);
+        self.fd6818.enter_dtmf_mode(syst, false);
+        self.dtmf_rx_len = 0;
+        self.dtmf_rx_timeout = 0;
+        self.tx_state = false;
     }
 
-    pub fn enter_tx(&mut self, syst: &mut SYST) {
+    #[must_use]
+    pub fn enter_tx(&mut self, syst: &mut SYST) -> bool {
+        if !self.tx_allowed.allows(self.cfg.tx_freq_hz) {
+            return false;
+        }
         board::set_speaker_switch(self.gpiob, false);
         self.fd6818.rf_off(syst);
         board::set_rx_band_off(self.gpioa);
@@ -320,6 +539,8 @@ impl<'a> Radio<'a> {
             Band::Vhf => self.fd6818.set_tx_band_vhf(syst),
         }
         self.fd6818.set_tx_led(syst, true);
+        self.tx_state = true;
+        true
     }
 
     pub fn end_tx(&mut self, syst: &mut SYST) {

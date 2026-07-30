@@ -30,6 +30,9 @@ pub mod addr {
     pub const F2CHAN_ADDR: u32 = 0xE002;
 
     pub const DEBUG_ADDR: u32 = 0xF000;
+    pub const PA_TABLE_BASE_HIGH: u32 = 0xF000;
+    pub const PA_TABLE_BASE_MID: u32 = 0xF040;
+    pub const PA_TABLE_BASE_LOW: u32 = 0xF080;
     pub const DEV_BATT_ADDR: u32 = 0xF200;
     pub const RF_MODULATION_ADDR: u32 = 0xF210;
     pub const DEV_LANGUAGE_ADDR: u32 = 0xF220;

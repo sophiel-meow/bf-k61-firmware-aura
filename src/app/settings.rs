@@ -1,5 +1,5 @@
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum MenuItem {
+pub enum SettingItem {
     Sql,
     Step,
     Tot,
@@ -25,63 +25,63 @@ pub enum MenuItem {
     Reset,
 }
 
-pub const MENU_ORDER: [MenuItem; 23] = [
-    MenuItem::Sql,
-    MenuItem::Step,
-    MenuItem::Tot,
-    MenuItem::Tdr,
-    MenuItem::BusyLock,
-    MenuItem::TxForbid,
-    MenuItem::Wn,
-    MenuItem::TxPr,
-    MenuItem::RxCts,
-    MenuItem::TxCts,
-    MenuItem::Sftd,
-    MenuItem::Offse,
-    MenuItem::Beep,
-    MenuItem::AutoLk,
-    MenuItem::Vox,
-    MenuItem::VoxLv,
-    MenuItem::Scrm,
-    MenuItem::Rtone,
-    MenuItem::Rptrl,
-    MenuItem::Contrast,
-    MenuItem::Roge,
-    MenuItem::Info,
-    MenuItem::Reset,
+pub const SETTINGS_ORDER: [SettingItem; 23] = [
+    SettingItem::Sql,
+    SettingItem::Step,
+    SettingItem::Tot,
+    SettingItem::Tdr,
+    SettingItem::BusyLock,
+    SettingItem::TxForbid,
+    SettingItem::Wn,
+    SettingItem::TxPr,
+    SettingItem::RxCts,
+    SettingItem::TxCts,
+    SettingItem::Sftd,
+    SettingItem::Offse,
+    SettingItem::Beep,
+    SettingItem::AutoLk,
+    SettingItem::Vox,
+    SettingItem::VoxLv,
+    SettingItem::Scrm,
+    SettingItem::Rtone,
+    SettingItem::Rptrl,
+    SettingItem::Contrast,
+    SettingItem::Roge,
+    SettingItem::Info,
+    SettingItem::Reset,
 ];
 
-impl MenuItem {
+impl SettingItem {
     pub fn label(self) -> &'static str {
         match self {
-            MenuItem::Sql => "SQL",
-            MenuItem::Step => "STEP",
-            MenuItem::Tot => "TOT",
-            MenuItem::Tdr => "TDR",
-            MenuItem::BusyLock => "BCL",
-            MenuItem::TxForbid => "TXINH",
-            MenuItem::Wn => "W/N",
-            MenuItem::TxPr => "PWR",
-            MenuItem::RxCts => "R-CTC",
-            MenuItem::TxCts => "T-CTC",
-            MenuItem::Sftd => "SHIFT",
-            MenuItem::Offse => "OFFSET",
-            MenuItem::Beep => "BEEP",
-            MenuItem::AutoLk => "AUTOLK",
-            MenuItem::Vox => "VOX",
-            MenuItem::VoxLv => "VOXLV",
-            MenuItem::Scrm => "SCRM",
-            MenuItem::Rtone => "RTONE",
-            MenuItem::Rptrl => "RPTRL",
-            MenuItem::Contrast => "CONTR",
-            MenuItem::Roge => "ROGER",
-            MenuItem::Info => "INFO",
-            MenuItem::Reset => "RESET",
+            SettingItem::Sql => "SQL",
+            SettingItem::Step => "STEP",
+            SettingItem::Tot => "TOT",
+            SettingItem::Tdr => "TDR",
+            SettingItem::BusyLock => "BCL",
+            SettingItem::TxForbid => "TXINH",
+            SettingItem::Wn => "W/N",
+            SettingItem::TxPr => "PWR",
+            SettingItem::RxCts => "R-CTC",
+            SettingItem::TxCts => "T-CTC",
+            SettingItem::Sftd => "SHIFT",
+            SettingItem::Offse => "OFFSET",
+            SettingItem::Beep => "BEEP",
+            SettingItem::AutoLk => "AUTOLK",
+            SettingItem::Vox => "VOX",
+            SettingItem::VoxLv => "VOXLV",
+            SettingItem::Scrm => "SCRM",
+            SettingItem::Rtone => "RTONE",
+            SettingItem::Rptrl => "RPTRL",
+            SettingItem::Contrast => "CONTR",
+            SettingItem::Roge => "ROGER",
+            SettingItem::Info => "INFO",
+            SettingItem::Reset => "RESET",
         }
     }
 
     pub fn is_placeholder(self) -> bool {
-        matches!(self, MenuItem::Rptrl)
+        matches!(self, SettingItem::Rptrl)
     }
 }
 
