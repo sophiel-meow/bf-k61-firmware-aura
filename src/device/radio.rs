@@ -4,7 +4,7 @@ use crate::hal::{adc, debounce, delay};
 use cortex_m::peripheral::SYST;
 use kd32f328_pac::{gpioa, gpiof};
 
-pub use crate::drivers::fd6818::{Modulation, Power, SubAudio};
+pub use crate::drivers::fd6818::{Modulation, Power, RawTone, SubAudio};
 
 /// How long `end_tx()` holds the tail-elimination tone before actually
 /// cutting the carrier.
@@ -81,6 +81,17 @@ impl FreqRanges {
         self.ranges[..self.count as usize]
             .iter()
             .any(|r| r.contains(freq_hz))
+    }
+
+    /// Overall `(lowest low_hz, highest high_hz)` across all defined
+    /// windows, for wrapping a stepped scan at the outer edges, not a
+    /// membership test (the gap between disjoint windows, if any, isn't
+    /// considered).
+    pub fn bounds(&self) -> (u32, u32) {
+        let active = &self.ranges[..self.count as usize];
+        let lo = active.iter().map(|r| r.low_hz).min().unwrap_or(0);
+        let hi = active.iter().map(|r| r.high_hz).max().unwrap_or(u32::MAX);
+        (lo, hi)
     }
 }
 
@@ -569,4 +580,52 @@ impl Radio {
         }
         self.enter_rx(syst);
     }
+
+    pub fn tune_search_candidate(&mut self, syst: &mut SYST, freq_hz: u32, uhf_path: bool) {
+        self.fd6818.idle(syst);
+        self.fd6818.set_frequency_hz(syst, freq_hz);
+        self.fd6818.set_wide_bandwidth(syst, true);
+        if uhf_path {
+            board::set_rx_band_uhf(self.gpioa);
+        } else {
+            board::set_rx_band_vhf(self.gpioa);
+        }
+        self.fd6818.rx_on(syst);
+    }
+
+    pub fn freq_scan_enable(&mut self, syst: &mut SYST) {
+        self.fd6818.freq_scan_enable(syst);
+    }
+
+    pub fn freq_scan_disable(&mut self, syst: &mut SYST) {
+        self.fd6818.freq_scan_disable(syst);
+    }
+
+    pub fn check_freq_scan(&mut self, syst: &mut SYST) -> Option<u32> {
+        self.fd6818.check_freq_scan(syst)
+    }
+
+    pub fn set_subaudio_scan_filter(&mut self, syst: &mut SYST, enabled: bool) {
+        self.fd6818.set_subaudio_scan_filter(syst, enabled);
+    }
+
+    pub fn detect_subaudio_raw(&mut self, syst: &mut SYST) -> RawTone {
+        self.fd6818.detect_subaudio_raw(syst)
+    }
+
+    pub fn correct_measured_freq_word(&self, raw_word: u32) -> u32 {
+        self.fd6818.correct_measured_freq_word(raw_word)
+    }
+}
+
+pub fn ctcss_raw_to_tenths_hz(raw: u16) -> u16 {
+    Fd6818::ctcss_raw_to_tenths_hz(raw)
+}
+
+pub fn find_standard_ctcss(tenths_hz: u16, table: &[u16]) -> Option<u16> {
+    Fd6818::find_standard_ctcss(tenths_hz, table)
+}
+
+pub fn find_standard_dcs(raw23: u32, table: &[u16]) -> Option<u16> {
+    Fd6818::find_standard_dcs(raw23, table)
 }

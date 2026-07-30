@@ -5,12 +5,14 @@ pub enum LauncherEntry {
     Settings,
     FmRadio,
     Scan,
+    ScanQt,
 }
 
 pub const LAUNCHER_ITEMS: &[LauncherEntry] = &[
     LauncherEntry::Settings,
     LauncherEntry::FmRadio,
     LauncherEntry::Scan,
+    LauncherEntry::ScanQt,
 ];
 
 impl LauncherEntry {
@@ -19,6 +21,7 @@ impl LauncherEntry {
             LauncherEntry::Settings => "SETTINGS",
             LauncherEntry::FmRadio => "FM RADIO",
             LauncherEntry::Scan => "SCAN",
+            LauncherEntry::ScanQt => "QT SCAN",
         }
     }
 
@@ -27,6 +30,7 @@ impl LauncherEntry {
             LauncherEntry::Settings => true,
             LauncherEntry::FmRadio => false,
             LauncherEntry::Scan => false,
+            LauncherEntry::ScanQt => true,
         }
     }
 
@@ -35,6 +39,7 @@ impl LauncherEntry {
             LauncherEntry::Settings => Mode::Settings,
             LauncherEntry::FmRadio => Mode::Fm,
             LauncherEntry::Scan => Mode::Scan,
+            LauncherEntry::ScanQt => Mode::ScanQt,
         }
     }
 }

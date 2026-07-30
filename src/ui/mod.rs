@@ -1,9 +1,15 @@
 pub mod icons;
 mod launcher;
+mod scan;
+mod scanqt;
+mod search;
 mod settings;
 mod standby;
 
 use launcher::draw_app_menu;
+use scan::draw_scan;
+use scanqt::draw_scanqt;
+use search::draw_search;
 use settings::draw_settings;
 use standby::draw_standby;
 
@@ -50,6 +56,9 @@ pub fn draw<DI: WriteOnlyDataCommand>(display: &mut Display<'_, DI>, app: &app::
     match app.mode() {
         app::Mode::AppMenu => draw_app_menu(display.as_draw_target(), app),
         app::Mode::Settings => draw_settings(display.as_draw_target(), app),
+        app::Mode::Scan => draw_scan(display.as_draw_target(), app),
+        app::Mode::Search => draw_search(display.as_draw_target(), app),
+        app::Mode::ScanQt => draw_scanqt(display.as_draw_target(), app),
         _ => draw_standby(display.as_draw_target(), app),
     }
     display.flush();

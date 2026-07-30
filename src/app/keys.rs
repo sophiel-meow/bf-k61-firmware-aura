@@ -1,6 +1,7 @@
 use super::launcher::{LauncherEntry, LAUNCHER_ITEMS};
 use super::settings;
 use super::settings_ops;
+use super::{scan, scanqt, search};
 use super::{
     digit_value, App, ChVfoMode, Mode, CHANNEL_INPUT_DIGITS, DUAL_STANDBY_HOLD_TICKS,
     RTONE_HZ_DIV_10, VFO_INPUT_DIGITS, VOX_HOLD_AFTER_KEY_TICKS,
@@ -35,6 +36,9 @@ pub(super) fn dispatch(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
         Mode::Standby => dispatch_standby(app, syst, ev),
         Mode::AppMenu => dispatch_app_menu(app, syst, ev),
         Mode::Settings => dispatch_settings(app, syst, ev),
+        Mode::Scan => scan::dispatch(app, syst, ev),
+        Mode::Search => search::dispatch(app, syst, ev),
+        Mode::ScanQt => scanqt::dispatch(app, syst, ev),
         _ => {}
     }
 }
@@ -96,6 +100,8 @@ fn dispatch_standby(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
             KeyId::Asterisk => app.key_lock = !app.key_lock,
             KeyId::Digit8 => app.toggle_power(syst),
             KeyId::Digit9 => app.test_send_dtmf(syst),
+            KeyId::Band => search::enter(app, syst),
+            KeyId::Pound => scan::enter(app, syst),
             _ => {}
         },
         _ => {}
@@ -107,7 +113,7 @@ fn enter_app_menu(app: &mut App) {
     app.input.clear();
 }
 
-fn dispatch_app_menu(app: &mut App, _syst: &mut SYST, ev: KeyEvent) {
+fn dispatch_app_menu(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
     match ev.kind {
         KeyEventKind::Single | KeyEventKind::Repeat => match ev.key {
             KeyId::Up | KeyId::Down => {
@@ -124,6 +130,7 @@ fn dispatch_app_menu(app: &mut App, _syst: &mut SYST, ev: KeyEvent) {
                 if entry.is_available() {
                     match entry {
                         LauncherEntry::Settings => settings_ops::enter(app),
+                        LauncherEntry::ScanQt => scanqt::enter(app, syst),
                         _ => app.mode = entry.target_mode(),
                     }
                 }

@@ -332,6 +332,11 @@ pub struct Settings {
     /// Repeater-access tone selection, 0-3: which single tone a side-key
     /// press sends during TX. 1000/1450/1750/2100 Hz; default is 1750 Hz.
     pub rtone: u8,
+    /// Channel/frequency scan resume behavior, 0-2: 0 = Time (fixed dwell,
+    /// then resume regardless of carrier), 1 = Carrier (resume a fixed
+    /// grace period after carrier drops), 2 = Search (stop scanning
+    /// entirely once found).
+    pub scan_mode: u8,
 }
 
 impl Settings {
@@ -350,6 +355,7 @@ impl Settings {
         scramble_level: 0,
         contrast: 2,
         rtone: 2,
+        scan_mode: 1,
     };
 
     pub fn from_bytes(buf: &[u8; 16]) -> Settings {
@@ -368,6 +374,7 @@ impl Settings {
             scramble_level: buf[11],
             contrast: buf[12].min(4),
             rtone: buf[13].min(3),
+            scan_mode: buf[14].min(2),
         }
     }
 
@@ -387,7 +394,7 @@ impl Settings {
             self.scramble_level,
             self.contrast,
             self.rtone,
-            0,
+            self.scan_mode,
             0,
         ]
     }

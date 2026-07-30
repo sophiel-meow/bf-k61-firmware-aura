@@ -59,6 +59,31 @@ const REG_CTCSS: u8 = 0x51;
 /// "CTCSS0" tone bank (the one actually transmitted/decoded); [13]=1
 /// selects a second bank always held at the fixed 55.1Hz tail-elimination
 const REG_SUBAUDIO_FREQ: u8 = 0x07;
+/// REG 0x68: raw CTCSS frequency word as auto-decoded off air (bit15 = "not
+/// found" flag, bits[12:0] the raw word -- same units as `subaudio_reg_word`
+/// produces, convert with `ctcss_raw_to_tenths_hz`). Only valid while
+/// `set_subaudio_scan_filter(true)` is active.
+const REG_CTS_RAW: u8 = 0x68;
+/// REG 0x69/0x6A: raw 23-bit DCS/CDCSS codeword as auto-decoded off air,
+/// split as two 12-bit halves (0x69 bit15 = "not found" flag).
+const REG_DCS_HI: u8 = 0x69;
+const REG_DCS_LO: u8 = 0x6A;
+/// REG 0x32: hardware wideband frequency-scan control (used by Search
+/// mode's frequency-hunt). BIT0 enable; bits[15:14] scan-time (00=0.2s,
+/// 01=0.4s, 10=0.8s, 11=1.6s per attempt). The vendor's own constant
+/// (`REG_32 = 0x8244`) sets this to "10"/0.8s; since `Hunt` needs two
+/// agreeing samples, that's up to 1.6s just to validate one reading. Set
+/// to "00"/0.2s (the fastest option) instead -- a same-chip-family
+/// (BK4819) firmware's equivalent frequency-scan feature uses exactly this
+/// fastest setting, so it's a proven-safe choice on this hardware, not a
+/// guess.
+const REG_FREQ_SCAN_CTRL: u8 = 0x32;
+const FREQ_SCAN_BASE: u16 = 0x0244;
+/// REG 0x0D/0x0E: raw frequency-counter readback while the hardware
+/// frequency-scan circuit is hunting. 0x0D bit15 is a "not ready yet" flag;
+/// bits[10:0] are the counter's high bits, 0x0E holds the low 16 bits.
+const REG_FREQ_SCAN_HI: u8 = 0x0D;
+const REG_FREQ_SCAN_LO: u8 = 0x0E;
 const REG_SUBAUDIO_THRESH: u8 = 0x52;
 const SUBAUDIO_THRESH_VALUE: u16 = 0x0292;
 /// REG 0x78: RSSI-based squelch threshold, 0.5dB/step.
@@ -278,6 +303,17 @@ pub enum AfOutState {
 pub enum Modulation {
     Fm,
     Am,
+}
+
+/// A tone auto-detected off air by the hardware decoder
+/// before matching against a standard table.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RawTone {
+    None,
+    /// Raw CTCSS frequency word, same units `subaudio_reg_word` produces.
+    Ctcss(u16),
+    /// Raw 23-bit DCS/CDCSS codeword.
+    Dcs(u32),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -680,7 +716,13 @@ impl<'a> Fd6818<'a> {
     /// volume level applies when the state isn't a fixed-volume tone.
     /// In `Modulation::Am`, RX audio gets an extra REG 0x47 bit and a fixed
     /// REG_VOLUME value instead of the wideband/narrowband calibration.
-    pub fn set_af_out(&mut self, syst: &mut SYST, state: AfOutState, wide: bool, modulation: Modulation) {
+    pub fn set_af_out(
+        &mut self,
+        syst: &mut SYST,
+        state: AfOutState,
+        wide: bool,
+        modulation: Modulation,
+    ) {
         let state_bits = match state {
             AfOutState::Mute => AF_STATE_MUTE,
             AfOutState::RxAudio => AF_STATE_RX_AUDIO,
@@ -799,6 +841,105 @@ impl<'a> Fd6818<'a> {
             SubaudioMatchBit::DcsInverted => STATUS_DCS_MATCH_INVERTED,
         };
         status & bit != 0
+    }
+
+    /// Enables/disables the hardware wideband frequency-scan circuit used
+    /// by Search mode's frequency-hunt.
+    pub fn freq_scan_enable(&mut self, syst: &mut SYST) {
+        self.write_reg(syst, REG_FREQ_SCAN_CTRL, FREQ_SCAN_BASE | 0x0001);
+    }
+
+    pub fn freq_scan_disable(&mut self, syst: &mut SYST) {
+        self.write_reg(syst, REG_FREQ_SCAN_CTRL, FREQ_SCAN_BASE);
+    }
+
+    /// Raw frequency-counter reading while the hardware frequency-scan
+    /// circuit is hunting; `None` while it hasn't locked onto a candidate
+    /// yet.
+    pub fn check_freq_scan(&mut self, syst: &mut SYST) -> Option<u32> {
+        let hi = self.read_reg(syst, REG_FREQ_SCAN_HI);
+        if hi & 0x8000 != 0 {
+            return None;
+        }
+        let lo = self.read_reg(syst, REG_FREQ_SCAN_LO);
+        Some((((hi & 0x07FF) as u32) << 16) | lo as u32)
+    }
+
+    /// Toggles the wide subaudio-filter bandwidth used while auto-detecting
+    /// an unknown CTCSS/DCS tone, as opposed to decoding a specific
+    /// configured one. Shares REG_CTCSS (0x51) with `set_subaudio_tx`/
+    /// `enable_rx_subaudio` -- callers must re-apply the normal subaudio
+    /// config after turning this back off. Ported from
+    /// `Rfic_CtcDcsScan_Setup`/`Rfic_ScanQT_Enable`/`Rfic_ScanQT_Disable`.
+    pub fn set_subaudio_scan_filter(&mut self, syst: &mut SYST, enabled: bool) {
+        self.write_reg(syst, REG_CTCSS, if enabled { 0x0300 } else { 0x0000 });
+    }
+
+    /// Reads the hardware's auto-decoded CTCSS/DCS tone, if any is
+    /// currently locked. Requires `set_subaudio_scan_filter(true)` to have
+    /// been applied first. Ported from `Rfic_GetCtsDcsData`; the original's
+    /// stuck-bit noise reject re-checked byte 0 five times instead of each
+    /// of the 5 sampled bytes (an apparent copy-paste bug) -- this checks
+    /// all 5 as clearly intended.
+    pub fn detect_subaudio_raw(&mut self, syst: &mut SYST) -> RawTone {
+        let dcs_hi = self.read_reg(syst, REG_DCS_HI);
+        if dcs_hi & 0x8000 == 0 {
+            let dcs_lo = self.read_reg(syst, REG_DCS_LO);
+            let raw = (((dcs_hi & 0x0FFF) as u32) << 12) | (dcs_lo & 0x0FFF) as u32;
+            let bytes = [
+                (raw & 0xFF) as u8,
+                ((raw >> 4) & 0xFF) as u8,
+                ((raw >> 8) & 0xFF) as u8,
+                ((raw >> 12) & 0xFF) as u8,
+                ((raw >> 16) & 0xFF) as u8,
+            ];
+            let stuck_ff = bytes.iter().filter(|&&b| b == 0xFF).count() >= 4;
+            let stuck_00 = bytes.iter().filter(|&&b| b == 0x00).count() >= 4;
+            return if stuck_ff || stuck_00 {
+                RawTone::None
+            } else {
+                RawTone::Dcs(raw)
+            };
+        }
+
+        let cts = self.read_reg(syst, REG_CTS_RAW);
+        if cts & 0x8000 == 0 {
+            return RawTone::Ctcss(cts & 0x1FFF);
+        }
+
+        RawTone::None
+    }
+
+    /// Reverses `subaudio_reg_word`: raw register word -> tenths of Hz.
+    /// Ported from the conversion done inline in `SearchFreqTask`.
+    pub fn ctcss_raw_to_tenths_hz(raw: u16) -> u16 {
+        ((raw as u32 * 100_000) / 206_489) as u16
+    }
+
+    /// Matches a detected CTCSS tone (tenths of Hz) against a standard
+    /// table, +/-0.9Hz tolerance. Ported from `CheckIsStandardCTCSS`.
+    pub fn find_standard_ctcss(tenths_hz: u16, table: &[u16]) -> Option<u16> {
+        table.iter().copied().find(|&t| tenths_hz.abs_diff(t) < 10)
+    }
+
+    /// Matches a detected 23-bit DCS/CDCSS codeword against a standard
+    /// table by re-encoding each candidate and comparing at all 23
+    /// bit-rotations (the receiver can lock onto any phase of the
+    /// repeating bitstream). Only checks normal polarity -- same
+    /// limitation as the original `CheckIsStandardDCS`, which never
+    /// reports an inverted-polarity match. Returns the plain DCS code.
+    pub fn find_standard_dcs(raw23: u32, table: &[u16]) -> Option<u16> {
+        let raw23 = raw23 & 0x007F_FFFF;
+        for &code in table {
+            let mut word = Self::dcs_encode(code) & 0x007F_FFFF;
+            for _ in 0..23 {
+                word = ((word << 1) | (word >> 22)) & 0x007F_FFFF;
+                if word == raw23 {
+                    return Some(code);
+                }
+            }
+        }
+        None
     }
 
     pub fn set_squelch_level(&mut self, syst: &mut SYST, freq_hz: u32, level: u8) {
@@ -981,6 +1122,23 @@ impl<'a> Fd6818<'a> {
 
         self.write_reg(syst, REG_FREQ_LO, word as u16);
         self.write_reg(syst, REG_FREQ_HI, (word >> 16) as u16);
+    }
+
+    /// Inverse of the xtal correction `set_frequency_hz` applies when
+    /// tuning: converts a *measured* raw frequency-counter word (deci-Hz,
+    /// back into the true frequency word, for Search mode's frequency-hunt.
+    pub fn correct_measured_freq_word(&self, raw_word: u32) -> u32 {
+        let idx = if self.xtal_adjust > 16 {
+            XTAL_ADJUST_ZERO_POINT
+        } else {
+            self.xtal_adjust
+        } as usize;
+        let adjust = raw_word * XTAL_ADJUST_TABLE[idx] / 10_000_000;
+        if idx as u8 > XTAL_ADJUST_ZERO_POINT {
+            raw_word - adjust
+        } else {
+            raw_word + adjust
+        }
     }
 
     /// REG 0x67[8:1]：RSSI

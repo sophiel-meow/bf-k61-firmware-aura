@@ -49,6 +49,7 @@ pub(super) fn current_value(app: &App, item: SettingItem) -> i32 {
         SettingItem::VoxLv => app.settings.vox_level as i32,
         SettingItem::Rtone => app.settings.rtone as i32,
         SettingItem::Contrast => app.settings.contrast as i32,
+        SettingItem::ScanMd => app.settings.scan_mode as i32,
         SettingItem::Info => app.settings_ui.info_page as i32,
         _ => 0,
     }
@@ -77,6 +78,7 @@ pub(super) fn adjust(app: &mut App, syst: &mut SYST, item: SettingItem, up: bool
         SettingItem::VoxLv => clamp_step(cur, up, 1, 9),
         SettingItem::Rtone => clamp_step(cur, up, 0, 3),
         SettingItem::Contrast => clamp_step(cur, up, 0, 4),
+        SettingItem::ScanMd => clamp_step(cur, up, 0, 2),
         SettingItem::Offse => {
             if up {
                 cur.saturating_add(side_step_hz as i32)
@@ -154,6 +156,7 @@ pub(super) fn apply(app: &mut App, syst: &mut SYST, item: SettingItem, v: i32) {
         SettingItem::VoxLv => app.settings.vox_level = v as u8,
         SettingItem::Rtone => app.settings.rtone = v as u8,
         SettingItem::Contrast => app.settings.contrast = v as u8,
+        SettingItem::ScanMd => app.settings.scan_mode = v as u8,
         _ => {}
     }
 }
@@ -284,6 +287,17 @@ pub fn value_text<W: Write>(app: &App, w: &mut W) {
         SettingItem::Offse => {
             let hz = current_value(app, item) as u32;
             let _ = write!(w, "{}.{:03}k", hz / 1000, hz % 1000);
+        }
+        SettingItem::ScanMd => {
+            let _ = write!(
+                w,
+                "{}",
+                match current_value(app, item) {
+                    0 => "TIME",
+                    2 => "STOP",
+                    _ => "CARR",
+                }
+            );
         }
         _ => {
             let _ = write!(w, "{}", current_value(app, item));

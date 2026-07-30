@@ -214,6 +214,13 @@ fn main() -> ! {
 
         app.poll_tot(&mut cp.SYST);
 
+        // Scan / Search / ScanQt (each self-guards on the current mode)
+        app.poll_search(&mut cp.SYST);
+        app.poll_scanqt(&mut cp.SYST);
+        if due.every_50ms {
+            app.poll_scan(&mut cp.SYST);
+        }
+
         // VOX
         let mic_level = app.radio_mut().read_mic_level();
         let audio_open = app.radio_mut().audio_is_open();

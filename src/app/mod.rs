@@ -1,5 +1,8 @@
 mod keys;
 mod launcher;
+mod scan;
+mod scanqt;
+mod search;
 mod settings;
 mod settings_ops;
 mod side;
@@ -55,6 +58,15 @@ pub enum Mode {
 enum ChVfoMode {
     Vfo,
     Channel,
+}
+
+/// Search mode's coarse status, for the standby-adjacent UI screens (the
+/// full state machine lives in `search`, private to this module).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SearchStatus {
+    Hunting,
+    Listening,
+    Found,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -295,6 +307,10 @@ pub struct App {
 
     // TODO: power save
     power_save: bool,
+
+    scan: scan::ScanState,
+    search: search::SearchState,
+    scanqt: scanqt::ScanQtState,
 }
 
 impl App {
@@ -393,6 +409,9 @@ impl App {
             battery_bars: 4,
             channel_display_mode: ChannelDisplayMode::Frequency,
             power_save: false,
+            scan: scan::ScanState::new(),
+            search: search::SearchState::new(),
+            scanqt: scanqt::ScanQtState::new(),
         }
     }
 
@@ -706,6 +725,11 @@ impl App {
 
     pub fn set_ptt(&mut self, syst: &mut SYST, pressed: bool) {
         if pressed && !self.transmitting {
+            // Scan/Search/ScanQt all leave normal standby, no TX while
+            // in any of them
+            if self.mode != Mode::Standby {
+                return;
+            }
             if self.settings.tx_forbid {
                 return;
             }
@@ -842,6 +866,40 @@ impl App {
     }
     pub fn poll_squelch(&mut self, syst: &mut SYST, db: u8) {
         self.radio.poll_squelch(syst, db);
+    }
+
+    pub fn poll_scan(&mut self, syst: &mut SYST) {
+        scan::poll(self, syst);
+    }
+    pub fn poll_search(&mut self, syst: &mut SYST) {
+        search::poll(self, syst);
+    }
+    pub fn poll_scanqt(&mut self, syst: &mut SYST) {
+        scanqt::poll(self, syst);
+    }
+    pub fn scan_direction_up(&self) -> bool {
+        scan::direction_up(self)
+    }
+    pub fn search_band_label(&self) -> &'static str {
+        search::band_label(self)
+    }
+    pub fn search_status(&self) -> SearchStatus {
+        search::status(self)
+    }
+    pub fn search_candidate_freq_hz(&self) -> u32 {
+        search::candidate_freq_hz(self)
+    }
+    pub fn search_tone(&self) -> Option<SubAudio> {
+        search::tone(self)
+    }
+    pub fn scanqt_is_found(&self) -> bool {
+        scanqt::is_found(self)
+    }
+    pub fn scanqt_is_listening(&self) -> bool {
+        scanqt::is_listening(self)
+    }
+    pub fn scanqt_tone(&self) -> Option<SubAudio> {
+        scanqt::tone(self)
     }
     pub fn rssi_open(&self) -> bool {
         self.radio.rssi_open()

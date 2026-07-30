@@ -222,7 +222,7 @@ where
     }
 }
 
-fn draw_right_aligned<D>(
+pub(super) fn draw_right_aligned<D>(
     lcd: &mut D,
     text: &str,
     font: &embedded_graphics::mono_font::MonoFont,
@@ -243,7 +243,7 @@ fn draw_right_aligned<D>(
 
 /// Big MHz.kHz frequency (ProFont) with the remaining 2 fractional digits
 /// trailing in a smaller font, both right-aligned as one block.
-fn draw_frequency<D>(lcd: &mut D, freq_hz: u32, baseline_y: i32)
+pub(super) fn draw_frequency<D>(lcd: &mut D, freq_hz: u32, baseline_y: i32)
 where
     D: DrawTarget<Color = BinaryColor>,
 {

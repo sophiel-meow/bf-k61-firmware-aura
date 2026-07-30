@@ -21,11 +21,12 @@ pub enum SettingItem {
     Rptrl,
     Contrast,
     Roge,
+    ScanMd,
     Info,
     Reset,
 }
 
-pub const SETTINGS_ORDER: [SettingItem; 23] = [
+pub const SETTINGS_ORDER: [SettingItem; 24] = [
     SettingItem::Sql,
     SettingItem::Step,
     SettingItem::Tot,
@@ -47,6 +48,7 @@ pub const SETTINGS_ORDER: [SettingItem; 23] = [
     SettingItem::Rptrl,
     SettingItem::Contrast,
     SettingItem::Roge,
+    SettingItem::ScanMd,
     SettingItem::Info,
     SettingItem::Reset,
 ];
@@ -75,6 +77,7 @@ impl SettingItem {
             SettingItem::Rptrl => "RPTRL",
             SettingItem::Contrast => "CONTR",
             SettingItem::Roge => "ROGER",
+            SettingItem::ScanMd => "SCANMD",
             SettingItem::Info => "INFO",
             SettingItem::Reset => "RESET",
         }
