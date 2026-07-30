@@ -32,6 +32,8 @@ const POWER_SAVE_IDLE_TICKS: u16 = 1000;
 const POWER_SAVE_AWAKE_TICKS: u16 = 10;
 const POWER_SAVE_SLEEP_TICKS_PER_LEVEL: u16 = 10;
 
+const BACKLIGHT_STEP_TICKS: u16 = 500;
+
 const VOX_THRESHOLD_TABLE: [u8; 11] = [127, 52, 62, 72, 84, 95, 106, 117, 125, 132, 140];
 const VOX_TX_HYSTERESIS: u8 = 8;
 const VOX_WORK_HOLD_TICKS: u8 = 100;
@@ -314,6 +316,8 @@ pub struct App {
     ps_idle_ticks: u16,
     ps_cycle_ticks: u16,
 
+    bl_idle_ticks: u16,
+
     scan: scan::ScanState,
     search: search::SearchState,
     scanqt: scanqt::ScanQtState,
@@ -419,6 +423,7 @@ impl App {
             ps_asleep: false,
             ps_idle_ticks: POWER_SAVE_IDLE_TICKS,
             ps_cycle_ticks: 0,
+            bl_idle_ticks: settings.backlight_time as u16 * BACKLIGHT_STEP_TICKS,
             scan: scan::ScanState::new(),
             search: search::SearchState::new(),
             scanqt: scanqt::ScanQtState::new(),
@@ -516,6 +521,24 @@ impl App {
             self.ps_cycle_ticks =
                 self.settings.save_level as u16 * POWER_SAVE_SLEEP_TICKS_PER_LEVEL;
         }
+    }
+
+    // backlight
+    fn note_backlight_activity(&mut self) {
+        self.bl_idle_ticks = self.settings.backlight_time as u16 * BACKLIGHT_STEP_TICKS;
+    }
+
+    pub fn poll_backlight(&mut self) {
+        if self.radio.audio_is_open() {
+            self.note_backlight_activity();
+        }
+        if self.bl_idle_ticks > 0 {
+            self.bl_idle_ticks -= 1;
+        }
+    }
+
+    pub fn backlight_should_be_on(&self) -> bool {
+        self.transmitting || self.settings.backlight_time == 0 || self.bl_idle_ticks > 0
     }
 
     // persistence
@@ -809,6 +832,7 @@ impl App {
 
     pub fn set_ptt(&mut self, syst: &mut SYST, pressed: bool) {
         self.note_power_save_activity(syst);
+        self.note_backlight_activity();
         if pressed && !self.transmitting {
             // Scan/Search/ScanQt all leave normal standby, no TX while
             // in any of them

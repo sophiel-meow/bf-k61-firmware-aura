@@ -183,6 +183,7 @@ fn main() -> ! {
     // scheduler + main loop
     let mut scheduler = scheduler::Scheduler::new();
     let mut applied_contrast: u8 = u8::MAX;
+    let mut backlight_on = true;
 
     loop {
         let due = scheduler.tick();
@@ -213,6 +214,7 @@ fn main() -> ! {
         }
 
         app.poll_tot(&mut cp.SYST);
+        app.poll_backlight();
 
         // Scan / Search / ScanQt (each self-guards on the current mode)
         app.poll_search(&mut cp.SYST);
@@ -234,6 +236,19 @@ fn main() -> ! {
         if due.every_50ms && applied_contrast != app.contrast() {
             display.set_contrast(app.contrast());
             applied_contrast = app.contrast();
+        }
+
+        // Backlight auto-off
+        if due.every_50ms {
+            let want_on = app.backlight_should_be_on();
+            if want_on != backlight_on {
+                if want_on {
+                    backlight.on();
+                } else {
+                    backlight.off();
+                }
+                backlight_on = want_on;
+            }
         }
 
         // RX path

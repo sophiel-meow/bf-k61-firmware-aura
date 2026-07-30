@@ -54,6 +54,7 @@ pub(super) fn current_value(app: &App, item: SettingItem) -> i32 {
         SettingItem::ScanMd => app.settings.scan_mode as i32,
         SettingItem::Rit => app.settings.rit_offset as i32,
         SettingItem::Save => app.settings.save_level as i32,
+        SettingItem::Abr => app.settings.backlight_time as i32,
         SettingItem::Info => app.settings_ui.info_page as i32,
         _ => 0,
     }
@@ -85,6 +86,7 @@ pub(super) fn adjust(app: &mut App, syst: &mut SYST, item: SettingItem, up: bool
         SettingItem::ScanMd => clamp_step(cur, up, 0, 2),
         SettingItem::Rit => clamp_step(cur, up, -127, 127),
         SettingItem::Save => clamp_step(cur, up, 0, 4),
+        SettingItem::Abr => clamp_step(cur, up, 0, 4),
         SettingItem::Offse => {
             if up {
                 cur.saturating_add(side_step_hz as i32)
@@ -166,6 +168,10 @@ pub(super) fn apply(app: &mut App, syst: &mut SYST, item: SettingItem, v: i32) {
         SettingItem::Save => {
             app.settings.save_level = v as u8;
             app.reset_power_save(syst);
+        }
+        SettingItem::Abr => {
+            app.settings.backlight_time = v as u8;
+            app.note_backlight_activity();
         }
         SettingItem::Rit => {
             app.settings.rit_offset = v as i8;
@@ -332,6 +338,19 @@ pub fn value_text<W: Write>(app: &App, w: &mut W) {
             } else {
                 write!(w, "{}", v)
             };
+        }
+        SettingItem::Abr => {
+            let _ = write!(
+                w,
+                "{}",
+                match current_value(app, item) {
+                    1 => "5S",
+                    2 => "10S",
+                    3 => "15S",
+                    4 => "20S",
+                    _ => "OFF",
+                }
+            );
         }
         _ => {
             let _ = write!(w, "{}", current_value(app, item));
