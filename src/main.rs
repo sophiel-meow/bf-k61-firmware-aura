@@ -250,20 +250,8 @@ fn main() -> ! {
                 .ok();
             }
 
-            match app.mode() {
-                app::Mode::AppMenu => {
-                    ui::draw_app_menu(display.as_draw_target(), &app);
-                }
-                app::Mode::Settings => {
-                    ui::draw_settings(display.as_draw_target(), &app);
-                }
-                _ => {
-                    ui::draw_standby(display.as_draw_target(), &app);
-                }
-            }
-            display.flush();
+            ui::draw(&mut display, &app);
         }
-
         delay::ms(&mut cp.SYST, 10);
     }
 }
