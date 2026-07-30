@@ -855,6 +855,7 @@ impl App {
             self.radio.set_power(power);
             self.radio.set_subaudio_tx(s.cfg.subaudio_tx);
             self.radio.set_subaudio_rx(s.cfg.subaudio_rx);
+            self.radio.set_modulation(s.cfg.modulation);
             self.reload_pa_calibration(tx_freq_hz, power);
             if self.radio.enter_tx(syst) {
                 self.transmitting = true;
