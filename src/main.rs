@@ -15,6 +15,7 @@ use kd32f328_pac::Peripherals;
 use panic_halt as _;
 
 use device::display::{Backlight, Display};
+use device::fm_radio::FmRadio;
 use device::keypad::Keypad;
 use device::power::Power;
 use device::radio::{AniConfig, ChannelConfig, Modulation, Power as TxPower, Radio, SubAudio};
@@ -154,11 +155,15 @@ fn main() -> ! {
         ani,
     );
 
+    // FM broadcast chip (RDA5807)
+    let fm_radio = FmRadio::new(gpioa);
+
     // app class
     let mut app = app::App::new(
         radio,
         Keypad::new(gpiob, gpioc, gpiof),
         storage,
+        fm_radio,
         ChannelConfig {
             freq_hz: DEFAULT_FREQ_HZ,
             tx_freq_hz: DEFAULT_FREQ_HZ,
@@ -216,9 +221,10 @@ fn main() -> ! {
         app.poll_tot(&mut cp.SYST);
         app.poll_backlight();
 
-        // Scan / Search / ScanQt (each self-guards on the current mode)
+        // Scan / Search / ScanQt / Fm (each self-guards on the current mode)
         app.poll_search(&mut cp.SYST);
         app.poll_scanqt(&mut cp.SYST);
+        app.poll_fm(&mut cp.SYST);
         if due.every_50ms {
             app.poll_scan(&mut cp.SYST);
         }

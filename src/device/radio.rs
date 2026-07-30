@@ -223,6 +223,17 @@ impl Radio {
         self.fd6818.rf_off(syst);
     }
 
+    /// Park the two-way receiver while the FM broadcast chip is active.
+    pub fn park_for_fm(&mut self, syst: &mut SYST) {
+        self.fd6818.idle(syst);
+        self.fd6818.pa_off(syst);
+        board::set_speaker_switch(self.gpiob, false);
+    }
+
+    pub fn set_speaker(&mut self, on: bool) {
+        board::set_speaker_switch(self.gpiob, on);
+    }
+
     /// Load PA calibration for the given TX frequency+power from flash,
     /// pushing it into the FD6818 driver. Returns `true` if a calibration
     /// address was found.

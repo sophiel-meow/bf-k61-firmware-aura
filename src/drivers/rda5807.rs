@@ -25,7 +25,9 @@ const ADDR_READ: u8 = 0x21; // 0b0010000 + R
 /// Bits not listed (RDS_EN, RCLK_NON_CALIBRATE, RCLK_DIRECT_INPUT,
 /// SOFT_RESET) are left at their reset default of 0.
 const CTRL_NORMAL: u16 = 0xD265;
-const CTRL_SEEK: u16 = CTRL_NORMAL | 0x0100; // + SEEK=1
+const CTRL_SEEK: u16 = CTRL_NORMAL | 0x0100; // + SEEK=1, SEEKUP=1 (from CTRL_NORMAL)
+/// Same as `CTRL_SEEK` but with SEEKUP (bit9) cleared, for searching downward.
+const CTRL_SEEK_DOWN: u16 = (CTRL_NORMAL & !0x0200) | 0x0100;
 /// DMUTE=0 (mute) and ENABLE=0, everything else unchanged.
 const CTRL_OFF: u16 = CTRL_NORMAL & !0x4001u16;
 
@@ -53,15 +55,28 @@ const CHANNEL_SPACING_KHZ: u32 = 100;
 
 const STATUS_STC: u16 = 0x4000; // REG0AH bit14: tune/seek complete
 const STATUS_SF: u16 = 0x2000; // REG0AH bit13: seek failed
+const STATUS_READCHAN_MASK: u16 = 0x03FF; // REG0AH bits[9:0]
 const STATUS_FM_TRUE: u16 = 0x0100; // REG0BH bit8: current channel is a station
+
+/// Full tunable range across both driver-supported bands (65.0-108.0MHz).
+pub const FREQ_LO_KHZ: u32 = LOW_BASE_KHZ;
+pub const FREQ_HI_KHZ: u32 = 108_000;
 
 pub struct Rda5807<'a> {
     i2c: I2cBus<'a>,
+    /// Band base used by the most recent `set_frequency_khz` call, needed to
+    /// convert `seek()`'s READCHAN result back into a frequency (`seek`
+    /// rewrites only REG02H, leaving REG03H's BAND bits — and thus which
+    /// base applies — unchanged from the last tune).
+    last_band_base_khz: u32,
 }
 
 impl<'a> Rda5807<'a> {
     pub fn new(gpioa: &'a gpioa::RegisterBlock) -> Self {
-        Rda5807 { i2c: I2cBus::new(gpioa) }
+        Rda5807 {
+            i2c: I2cBus::new(gpioa),
+            last_band_base_khz: WORLDWIDE_BASE_KHZ,
+        }
     }
 
     /// Sequential write starting at REG02H.
@@ -87,7 +102,10 @@ impl<'a> Rda5807<'a> {
         let b_hi = self.i2c.read_byte(syst, true);
         let b_lo = self.i2c.read_byte(syst, false);
         self.i2c.stop(syst);
-        (((a_hi as u16) << 8) | a_lo as u16, ((b_hi as u16) << 8) | b_lo as u16)
+        (
+            ((a_hi as u16) << 8) | a_lo as u16,
+            ((b_hi as u16) << 8) | b_lo as u16,
+        )
     }
 
     pub fn set_frequency_khz(&mut self, syst: &mut SYST, freq_khz: u32) {
@@ -96,13 +114,20 @@ impl<'a> Rda5807<'a> {
         } else {
             (LOW_BASE_KHZ, BAND_LOW)
         };
+        self.last_band_base_khz = base;
         let chan = freq_khz.saturating_sub(base) / CHANNEL_SPACING_KHZ;
         let reg03 = ((chan as u16) << 6) | (1 << 4) /* TUNE */ | (band << 2) | SPACE_100KHZ;
         self.write_regs(syst, &[CTRL_NORMAL, reg03, CONFIG_REG04, CONFIG_REG05]);
     }
 
-    pub fn seek(&mut self, syst: &mut SYST) {
-        self.write_regs(syst, &[CTRL_SEEK]);
+    pub fn seek(&mut self, syst: &mut SYST, up: bool) {
+        self.write_regs(syst, &[if up { CTRL_SEEK } else { CTRL_SEEK_DOWN }]);
+    }
+
+    pub fn tuned_frequency_khz(&mut self, syst: &mut SYST) -> u32 {
+        let (a, _b) = self.read_status(syst);
+        let chan = (a & STATUS_READCHAN_MASK) as u32;
+        self.last_band_base_khz + chan * CHANNEL_SPACING_KHZ
     }
 
     pub fn power_off(&mut self, syst: &mut SYST) {

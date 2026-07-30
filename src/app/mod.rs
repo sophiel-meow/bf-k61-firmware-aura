@@ -1,3 +1,4 @@
+mod fm;
 mod keys;
 mod launcher;
 mod scan;
@@ -7,6 +8,7 @@ mod settings;
 mod settings_ops;
 mod side;
 
+use crate::device::fm_radio::FmRadio;
 use crate::device::keypad::{KeyEvent, KeyEventKind, KeyId, Keypad};
 use crate::device::radio::{ChannelConfig, Modulation, Power, Radio, SubAudio};
 use crate::device::storage::Storage;
@@ -321,6 +323,10 @@ pub struct App {
     scan: scan::ScanState,
     search: search::SearchState,
     scanqt: scanqt::ScanQtState,
+
+    fm: fm::FmState,
+    fm_radio: FmRadio<'static>,
+    fm_channels: [u16; flash_map::FM_CHANNEL_COUNT],
 }
 
 impl App {
@@ -328,6 +334,7 @@ impl App {
         mut radio: Radio,
         keypad: Keypad,
         mut storage: Storage,
+        fm_radio: FmRadio<'static>,
         default_cfg: ChannelConfig,
         syst: &mut SYST,
     ) -> Self {
@@ -336,6 +343,9 @@ impl App {
             .load_settings()
             .unwrap_or(flash_map::Settings::DEFAULT);
         let battery_cal = storage.read_battery_calibration();
+        let fm_channels = storage
+            .load_fm_channels()
+            .unwrap_or([flash_map::FM_CHANNEL_EMPTY; flash_map::FM_CHANNEL_COUNT]);
 
         let mut sides = [
             side::Side {
@@ -427,6 +437,9 @@ impl App {
             scan: scan::ScanState::new(),
             search: search::SearchState::new(),
             scanqt: scanqt::ScanQtState::new(),
+            fm: fm::FmState::new(),
+            fm_radio,
+            fm_channels,
         }
     }
 
@@ -807,21 +820,41 @@ impl App {
         }
     }
 
-    pub fn launcher_value_text<W: core::fmt::Write>(&self, w: &mut W) {
-        keys::launcher_value_text(self, w);
+    pub fn launcher_index(&self) -> usize {
+        self.launcher_index
+    }
+
+    pub fn launcher_item_count(&self) -> usize {
+        launcher::LAUNCHER_ITEMS.len()
+    }
+
+    pub fn launcher_label_at(&self, index: usize) -> &'static str {
+        launcher::LAUNCHER_ITEMS[index].label()
+    }
+
+    pub fn launcher_available_at(&self, index: usize) -> bool {
+        launcher::LAUNCHER_ITEMS[index].is_available()
     }
 
     // settings UI
-    pub fn settings_item_label(&self) -> &'static str {
-        settings_ops::item_label(self)
-    }
-
     pub fn settings_editing(&self) -> bool {
         settings_ops::editing(self)
     }
 
-    pub fn settings_value_text<W: core::fmt::Write>(&self, w: &mut W) {
-        settings_ops::value_text(self, w)
+    pub fn settings_index(&self) -> usize {
+        self.settings_ui.index
+    }
+
+    pub fn settings_item_count(&self) -> usize {
+        settings::SETTINGS_ORDER.len()
+    }
+
+    pub fn settings_label_at(&self, index: usize) -> &'static str {
+        settings::SETTINGS_ORDER[index].label()
+    }
+
+    pub fn settings_value_at(&self, index: usize, w: &mut dyn core::fmt::Write) {
+        settings_ops::value_text_for(self, settings::SETTINGS_ORDER[index], w)
     }
 
     // PTT
@@ -1010,6 +1043,36 @@ impl App {
     }
     pub fn scanqt_tone(&self) -> Option<SubAudio> {
         scanqt::tone(self)
+    }
+    pub fn poll_fm(&mut self, syst: &mut SYST) {
+        fm::poll(self, syst);
+    }
+    pub fn fm_deci_mhz(&self) -> u16 {
+        fm::deci_mhz(self)
+    }
+    pub fn fm_is_channel_mode(&self) -> bool {
+        fm::is_channel_mode(self)
+    }
+    pub fn fm_channel_index(&self) -> u8 {
+        fm::channel_index(self)
+    }
+    pub fn fm_is_seeking(&self) -> bool {
+        fm::is_seeking(self)
+    }
+    pub fn fm_rssi(&self) -> u8 {
+        fm::rssi(self)
+    }
+    pub fn fm_save_picker_selected(&self) -> Option<u8> {
+        fm::save_picker_selected(self)
+    }
+    pub fn fm_channel_freq_at(&self, index: usize) -> Option<u16> {
+        fm::channel_freq_at(self, index)
+    }
+    pub fn fm_input_len(&self) -> usize {
+        fm::input_len(self)
+    }
+    pub fn fm_input_digit(&self, idx: usize) -> u8 {
+        fm::input_digit(self, idx)
     }
     pub fn rssi_open(&self) -> bool {
         self.radio.rssi_open()

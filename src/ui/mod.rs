@@ -1,11 +1,14 @@
+mod fm;
 pub mod icons;
 mod launcher;
+mod list;
 mod scan;
 mod scanqt;
 mod search;
 mod settings;
 mod standby;
 
+use fm::draw_fm;
 use launcher::draw_app_menu;
 use scan::draw_scan;
 use scanqt::draw_scanqt;
@@ -59,6 +62,7 @@ pub fn draw<DI: WriteOnlyDataCommand>(display: &mut Display<'_, DI>, app: &app::
         app::Mode::Scan => draw_scan(display.as_draw_target(), app),
         app::Mode::Search => draw_search(display.as_draw_target(), app),
         app::Mode::ScanQt => draw_scanqt(display.as_draw_target(), app),
+        app::Mode::Fm => draw_fm(display.as_draw_target(), app),
         _ => draw_standby(display.as_draw_target(), app),
     }
     display.flush();

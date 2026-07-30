@@ -9,6 +9,10 @@ const VFO_REGION: WearLeveledRegion<64> = WearLeveledRegion::new(addr::VFO_INFO_
 /// Global settings record.
 const SETTINGS_REGION: WearLeveledRegion<18> = WearLeveledRegion::new(addr::RADIO_IMFOS_ADDR, 16);
 
+/// FM broadcast channel list: 30 slots x u16 (little-endian deci-MHz).
+const FM_PAYLOAD_LEN: usize = flash_map::FM_CHANNEL_COUNT * 2;
+const FM_REGION: WearLeveledRegion<FM_PAYLOAD_LEN> = WearLeveledRegion::new(addr::FM_ADDR, 16);
+
 pub struct Storage {
     norflash: NorFlash<'static>,
 }
@@ -104,6 +108,24 @@ impl Storage {
     pub fn read_pa_calibration(&mut self, freq_hz: u32, power: Power) -> Option<u8> {
         let addr = Self::pa_calibration_addr(freq_hz, power)?;
         Some(self.read_pa_byte(addr))
+    }
+
+    // FM broadcast channel list
+    pub fn load_fm_channels(&mut self) -> Option<[u16; flash_map::FM_CHANNEL_COUNT]> {
+        let buf = FM_REGION.load(&mut self.norflash)?;
+        let mut channels = [flash_map::FM_CHANNEL_EMPTY; flash_map::FM_CHANNEL_COUNT];
+        for (slot, pair) in channels.iter_mut().zip(buf.chunks_exact(2)) {
+            *slot = u16::from_le_bytes([pair[0], pair[1]]);
+        }
+        Some(channels)
+    }
+
+    pub fn save_fm_channels(&mut self, channels: &[u16; flash_map::FM_CHANNEL_COUNT]) {
+        let mut buf = [0u8; FM_PAYLOAD_LEN];
+        for (pair, &v) in buf.chunks_exact_mut(2).zip(channels.iter()) {
+            pair.copy_from_slice(&v.to_le_bytes());
+        }
+        FM_REGION.save(&mut self.norflash, &buf);
     }
 
     // channels

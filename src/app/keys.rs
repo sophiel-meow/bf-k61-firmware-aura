@@ -1,3 +1,4 @@
+use super::fm;
 use super::launcher::{LauncherEntry, LAUNCHER_ITEMS};
 use super::settings;
 use super::settings_ops;
@@ -7,7 +8,6 @@ use super::{
     RTONE_HZ_DIV_10, VFO_INPUT_DIGITS, VOX_HOLD_AFTER_KEY_TICKS,
 };
 use crate::device::keypad::{KeyEvent, KeyEventKind, KeyId};
-use core::fmt::Write;
 use cortex_m::peripheral::SYST;
 
 // top-level dispatch
@@ -41,6 +41,7 @@ pub(super) fn dispatch(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
         Mode::Scan => scan::dispatch(app, syst, ev),
         Mode::Search => search::dispatch(app, syst, ev),
         Mode::ScanQt => scanqt::dispatch(app, syst, ev),
+        Mode::Fm => fm::dispatch(app, syst, ev),
         _ => {}
     }
 }
@@ -133,6 +134,8 @@ fn dispatch_app_menu(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
                     match entry {
                         LauncherEntry::Settings => settings_ops::enter(app),
                         LauncherEntry::ScanQt => scanqt::enter(app, syst),
+                        LauncherEntry::FmRadio => fm::enter(app, syst),
+                        LauncherEntry::Search => search::enter(app, syst),
                         _ => app.mode = entry.target_mode(),
                     }
                 }
@@ -147,15 +150,6 @@ fn dispatch_app_menu(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
     }
 }
 
-pub(super) fn launcher_value_text<W: Write>(app: &App, w: &mut W) {
-    let entry = LAUNCHER_ITEMS[app.launcher_index];
-    let _ = if entry.is_available() {
-        write!(w, "{}", entry.label())
-    } else {
-        write!(w, "{} ----", entry.label())
-    };
-}
-
 fn dispatch_settings(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
     let item = settings::SETTINGS_ORDER[app.settings_ui.index];
 
@@ -166,9 +160,9 @@ fn dispatch_settings(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
                 if !app.settings_ui.editing {
                     let len = settings::SETTINGS_ORDER.len();
                     app.settings_ui.index = if up {
-                        (app.settings_ui.index + 1) % len
-                    } else {
                         (app.settings_ui.index + len - 1) % len
+                    } else {
+                        (app.settings_ui.index + 1) % len
                     };
                 } else if item == settings::SettingItem::Info {
                     app.settings_ui.info_page ^= 1;

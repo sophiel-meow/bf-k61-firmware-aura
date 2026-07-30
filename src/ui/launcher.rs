@@ -1,50 +1,34 @@
-use super::TextBuf;
-use crate::app::{self, ChannelDisplayMode};
-use crate::device::radio::{Power, SubAudio};
-use core::fmt::Write as _;
-use embedded_graphics::image::Image;
-use embedded_graphics::mono_font::{
-    ascii::{FONT_5X8, FONT_6X10},
-    MonoTextStyle,
-};
+use super::list::{draw_list, ListSource};
+use crate::app;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
-use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
-use embedded_graphics::text::Text;
-use profont::PROFONT_14_POINT;
+
+struct LauncherSource<'a>(&'a app::App);
+
+impl<'a> ListSource for LauncherSource<'a> {
+    fn row_count(&self) -> usize {
+        self.0.launcher_item_count()
+    }
+
+    fn label(&self, index: usize) -> &'static str {
+        self.0.launcher_label_at(index)
+    }
+
+    fn value(&self, index: usize, w: &mut dyn core::fmt::Write) -> bool {
+        if self.0.launcher_available_at(index) {
+            false
+        } else {
+            let _ = write!(w, "----");
+            true
+        }
+    }
+}
 
 // draw_app_menu (launcher)
 pub fn draw_app_menu<D>(lcd: &mut D, app: &app::App)
 where
     D: DrawTarget<Color = BinaryColor>,
 {
-    Rectangle::new(Point::new(0, 0), Size::new(128, 64))
-        .into_styled(PrimitiveStyle::with_fill(BinaryColor::Off))
-        .draw(lcd)
-        .ok();
-
-    Text::new(
-        "MENU",
-        Point::new(4, 14),
-        MonoTextStyle::new(&FONT_6X10, BinaryColor::On),
-    )
-    .draw(lcd)
-    .ok();
-
-    let mut value: TextBuf<20> = TextBuf::new();
-    app.launcher_value_text(&mut value);
-
-    Rectangle::new(Point::new(0, 30), Size::new(128, 20))
-        .into_styled(PrimitiveStyle::with_fill(BinaryColor::Off))
-        .draw(lcd)
-        .ok();
-    Text::new(
-        value.as_str(),
-        Point::new(4, 44),
-        MonoTextStyle::new(&FONT_6X10, BinaryColor::On),
-    )
-    .draw(lcd)
-    .ok();
+    let source = LauncherSource(app);
+    draw_list(lcd, "MENU", &source, app.launcher_index(), false);
 }
-
-

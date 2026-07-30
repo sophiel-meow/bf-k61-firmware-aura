@@ -81,6 +81,12 @@ fn deci_hz_to_bcd4(deci_hz: u32) -> [u8; 4] {
     ]
 }
 
+/// FM broadcast channel list: stored plainly as tenths-of-a-MHz (650..=1080
+/// fits easily in `u16`)
+pub const FM_CHANNEL_COUNT: usize = 30;
+/// Erased-flash sentinel for "slot not set"
+pub const FM_CHANNEL_EMPTY: u16 = 0xFFFF;
+
 /// Decoded meaning of the raw `rxDCSCTSNum`/`txDCSCTSNum` code, per
 /// `GetCTSDCSType()`: 0 = none, 1..=105 = DCS normal, 106..=250 = DCS
 /// inverted, >250 = CTCSS in tenths of Hz.

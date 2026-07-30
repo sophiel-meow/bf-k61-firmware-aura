@@ -1,4 +1,4 @@
-use super::settings::{self, SettingItem};
+use super::settings::SettingItem;
 use super::{
     clamp_step, subaudio_from_index, subaudio_index, wrap_step, App, ChVfoMode, Mode,
     FIRMWARE_VERSION, RTONE_HZ_DIV_10, STEP_LIST_DECI_HZ, SUBAUDIO_MAX_INDEX,
@@ -186,16 +186,11 @@ pub(super) fn apply(app: &mut App, syst: &mut SYST, item: SettingItem, v: i32) {
 }
 
 // UI getters
-pub fn item_label(app: &App) -> &'static str {
-    settings::SETTINGS_ORDER[app.settings_ui.index].label()
-}
-
 pub fn editing(app: &App) -> bool {
     app.settings_ui.editing
 }
 
-pub fn value_text<W: Write>(app: &App, w: &mut W) {
-    let item = settings::SETTINGS_ORDER[app.settings_ui.index];
+pub fn value_text_for(app: &App, item: SettingItem, w: &mut dyn Write) {
     if item.is_placeholder() {
         let _ = write!(w, "----");
         return;

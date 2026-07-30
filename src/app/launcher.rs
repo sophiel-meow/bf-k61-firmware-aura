@@ -4,15 +4,15 @@ use super::Mode;
 pub enum LauncherEntry {
     Settings,
     FmRadio,
-    Scan,
     ScanQt,
+    Search,
 }
 
 pub const LAUNCHER_ITEMS: &[LauncherEntry] = &[
     LauncherEntry::Settings,
     LauncherEntry::FmRadio,
-    LauncherEntry::Scan,
     LauncherEntry::ScanQt,
+    LauncherEntry::Search,
 ];
 
 impl LauncherEntry {
@@ -20,17 +20,17 @@ impl LauncherEntry {
         match self {
             LauncherEntry::Settings => "SETTINGS",
             LauncherEntry::FmRadio => "FM RADIO",
-            LauncherEntry::Scan => "SCAN",
             LauncherEntry::ScanQt => "QT SCAN",
+            LauncherEntry::Search => "FREQ HUNT",
         }
     }
 
     pub fn is_available(self) -> bool {
         match self {
             LauncherEntry::Settings => true,
-            LauncherEntry::FmRadio => false,
-            LauncherEntry::Scan => false,
+            LauncherEntry::FmRadio => true,
             LauncherEntry::ScanQt => true,
+            LauncherEntry::Search => true,
         }
     }
 
@@ -38,8 +38,8 @@ impl LauncherEntry {
         match self {
             LauncherEntry::Settings => Mode::Settings,
             LauncherEntry::FmRadio => Mode::Fm,
-            LauncherEntry::Scan => Mode::Scan,
             LauncherEntry::ScanQt => Mode::ScanQt,
+            LauncherEntry::Search => Mode::Search,
         }
     }
 }
