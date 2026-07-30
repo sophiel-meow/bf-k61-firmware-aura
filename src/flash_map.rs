@@ -337,6 +337,10 @@ pub struct Settings {
     /// grace period after carrier drops), 2 = Search (stop scanning
     /// entirely once found).
     pub scan_mode: u8,
+    /// Receiver incremental tuning (clarifier), only applied while
+    /// `Modulation::Usb` is active: units of 10Hz (the hardware's own
+    /// minimum tuning step), full `i8` range so +/-127 steps = +/-1270Hz.
+    pub rit_offset: i8,
 }
 
 impl Settings {
@@ -356,6 +360,7 @@ impl Settings {
         contrast: 2,
         rtone: 2,
         scan_mode: 1,
+        rit_offset: 0,
     };
 
     pub fn from_bytes(buf: &[u8; 16]) -> Settings {
@@ -375,6 +380,7 @@ impl Settings {
             contrast: buf[12].min(4),
             rtone: buf[13].min(3),
             scan_mode: buf[14].min(2),
+            rit_offset: (buf[15] as i8).clamp(-127, 127),
         }
     }
 
@@ -395,7 +401,7 @@ impl Settings {
             self.contrast,
             self.rtone,
             self.scan_mode,
-            0,
+            self.rit_offset as u8,
         ]
     }
 

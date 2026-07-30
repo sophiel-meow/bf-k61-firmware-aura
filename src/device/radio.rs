@@ -165,6 +165,8 @@ pub struct Radio {
     roger_beep: bool,
     scramble_level: u8,
 
+    rit_offset_hz: i32,
+
     audio_open: bool,
     sq_debounce: u8,
 
@@ -202,6 +204,7 @@ impl Radio {
             beeps_enabled: true,
             roger_beep: false,
             scramble_level: 0,
+            rit_offset_hz: 0,
             audio_open: false,
             sq_debounce: 0,
             rssi_open: false,
@@ -325,6 +328,10 @@ impl Radio {
     pub fn set_scramble_level(&mut self, syst: &mut SYST, level: u8) {
         self.scramble_level = level;
         self.fd6818.set_scramble(syst, level);
+    }
+
+    pub fn set_rit_offset(&mut self, hz: i32) {
+        self.rit_offset_hz = hz;
     }
 
     // DTMF
@@ -513,11 +520,17 @@ impl Radio {
         self.fd6818.set_tx_band_off(syst);
         self.fd6818.power_rx(syst);
         self.fd6818.set_scramble(syst, self.scramble_level);
-        self.fd6818.set_frequency_hz(syst, self.cfg.freq_hz);
+        let tuned_freq_hz = if self.cfg.modulation == Modulation::Usb {
+            self.cfg.freq_hz.saturating_add_signed(self.rit_offset_hz)
+        } else {
+            self.cfg.freq_hz
+        };
+        self.fd6818.set_frequency_hz(syst, tuned_freq_hz);
         self.fd6818.set_wide_bandwidth(syst, self.cfg.wide_band);
         self.fd6818
             .set_squelch_level(syst, self.cfg.freq_hz, self.sql_level);
         self.fd6818.enable_rx_subaudio(syst, self.cfg.subaudio_rx);
+        self.fd6818.apply_modulation(syst, self.cfg.modulation);
         self.fd6818.rx_on(syst);
 
         self.fd6818.set_af_out(

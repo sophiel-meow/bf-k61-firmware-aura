@@ -378,6 +378,7 @@ impl App {
         radio.set_beeps_enabled(settings.beeps_switch);
         radio.set_roger_beep(settings.roger_beep);
         radio.set_scramble_level(syst, settings.scramble_level);
+        radio.set_rit_offset(settings.rit_offset as i32 * 10);
 
         App {
             radio,
@@ -568,7 +569,8 @@ impl App {
         let s = &mut self.sides[self.master];
         s.cfg.modulation = match s.cfg.modulation {
             Modulation::Fm => Modulation::Am,
-            Modulation::Am => Modulation::Fm,
+            Modulation::Am => Modulation::Usb,
+            Modulation::Usb => Modulation::Fm,
         };
         self.sync_watching_to_master(syst);
     }

@@ -330,6 +330,7 @@ where
     let modulation = match app.side_modulation(i) {
         Modulation::Fm => "FM",
         Modulation::Am => "AM",
+        Modulation::Usb => "USB",
     };
     let power = match app.side_power(i) {
         Power::Low => "Lo",

@@ -37,8 +37,19 @@ const REG_RXAGC_1: u8 = 0x13;
 const REG_RXAGC_2: u8 = 0x12;
 const REG_RXAGC_3: u8 = 0x11;
 const REG_RXAGC_4: u8 = 0x10;
+/// REG_RXAGC_5 (0x14) / REG_RXAGC_6 (0x49) are a matched pair: bottom step
+/// of the RX AGC gain table plus the RF-AGC low/high threshold. A
+/// "similiar chip" (BK4819) firmware writes a *different* pair
+/// specifically while the active demod is AM, switched every time RX
+/// modulation changes (`BK4819_InitAGC`/`RADIO_SetupAGC`).
+/// `set_agc_modulation` below switches between them; values for
+/// the AM pair are ported unmodified from that firmware.
 const REG_RXAGC_5: u8 = 0x14;
 const REG_RXAGC_6: u8 = 0x49;
+const RXAGC_5_FM: u16 = 0x0019;
+const RXAGC_6_FM: u16 = 0x2A38;
+const RXAGC_5_AM: u16 = 0x0000;
+const RXAGC_6_AM: u16 = 0x1920; // (50 << 7) | 32
 const REG_RXAGC_7: u8 = 0x7B;
 /// PA bias output voltage: [3:0] pabias_out, 0000=1.3V .. 1111=2.8V.
 const REG_PA_BIAS: u8 = 0x19;
@@ -271,6 +282,19 @@ const AM_AF_OUT_BIT: u16 = 0x0600;
 /// REG_VOLUME is fixed to this value in AM mode instead of the calibrated
 /// wideband/narrowband level.
 const AM_VOLUME_FIXED: u16 = 0xB3AA;
+/// Extra REG 0x47 bit set while demodulating in `Modulation::Usb` mode:
+/// ORed onto `AF_STATE_RX_AUDIO` (AF-select field = 1, "FM") this walks the
+/// 4-bit AF-select field from 1 to 5
+const USB_AF_OUT_BIT: u16 = 0x0400;
+
+const REG_UNKNOWN_3D: u8 = 0x3D;
+const UNKNOWN_3D_NORMAL: u16 = 0x2AAB;
+const UNKNOWN_3D_USB: u16 = 0x0000;
+
+/// REG 0x73 bit4: AFC (automatic frequency control) disable
+/// Needs to be on (AFC off) for anything but FM
+const REG_AFC_DISABLE: u8 = 0x73;
+const AFC_DISABLE_BIT: u16 = 0x0010;
 
 /// REG 0x71: single-tone oscillator frequency (shared by the UI key-beep,
 /// the 1750Hz repeater tone, and the roger beep).
@@ -303,6 +327,7 @@ pub enum AfOutState {
 pub enum Modulation {
     Fm,
     Am,
+    Usb,
 }
 
 /// A tone auto-detected off air by the hardware decoder
@@ -732,8 +757,12 @@ impl<'a> Fd6818<'a> {
             AfOutState::FskTest => AF_STATE_FSK_TEST,
         };
         let mut af_out = AF_OUT_BASE | state_bits;
-        if modulation == Modulation::Am && state == AfOutState::RxAudio {
-            af_out |= AM_AF_OUT_BIT;
+        if state == AfOutState::RxAudio {
+            match modulation {
+                Modulation::Am => af_out |= AM_AF_OUT_BIT,
+                Modulation::Usb => af_out |= USB_AF_OUT_BIT,
+                Modulation::Fm => {}
+            }
         }
         self.write_reg(syst, REG_AF_OUT, af_out);
 
@@ -750,6 +779,31 @@ impl<'a> Fd6818<'a> {
             0x8000 | (vol << 4) | DAC_GAIN
         };
         self.write_reg(syst, REG_VOLUME, vol_reg);
+    }
+
+    pub fn apply_modulation(&mut self, syst: &mut SYST, modulation: Modulation) {
+        let unknown_3d = if modulation == Modulation::Usb {
+            UNKNOWN_3D_USB
+        } else {
+            UNKNOWN_3D_NORMAL
+        };
+        self.write_reg(syst, REG_UNKNOWN_3D, unknown_3d);
+
+        let afc_disable = self.read_reg(syst, REG_AFC_DISABLE);
+        let afc_disable = if modulation != Modulation::Fm {
+            afc_disable | AFC_DISABLE_BIT
+        } else {
+            afc_disable & !AFC_DISABLE_BIT
+        };
+        self.write_reg(syst, REG_AFC_DISABLE, afc_disable);
+
+        let (agc5, agc6) = if modulation == Modulation::Am {
+            (RXAGC_5_AM, RXAGC_6_AM)
+        } else {
+            (RXAGC_5_FM, RXAGC_6_FM)
+        };
+        self.write_reg(syst, REG_RXAGC_5, agc5);
+        self.write_reg(syst, REG_RXAGC_6, agc6);
     }
 
     pub fn apply_tx_mic_gain(&mut self, syst: &mut SYST) {
@@ -1184,8 +1238,8 @@ impl<'a> Fd6818<'a> {
         self.write_reg(syst, REG_RXAGC_2, 0x037B);
         self.write_reg(syst, REG_RXAGC_3, 0x027B);
         self.write_reg(syst, REG_RXAGC_4, 0x007A);
-        self.write_reg(syst, REG_RXAGC_5, 0x0019);
-        self.write_reg(syst, REG_RXAGC_6, 0x2A38);
+        self.write_reg(syst, REG_RXAGC_5, RXAGC_5_FM);
+        self.write_reg(syst, REG_RXAGC_6, RXAGC_6_FM);
         self.write_reg(syst, REG_RXAGC_7, 0x8420);
 
         // PA bias output: low nibble 0x1 ~= 1.4V

@@ -8,6 +8,8 @@ use crate::flash_map;
 use core::fmt::Write;
 use cortex_m::peripheral::{SCB, SYST};
 
+const RIT_STEP_HZ: i32 = 10;
+
 pub(super) fn enter(app: &mut App) {
     app.mode = Mode::Settings;
     app.settings_ui.editing = false;
@@ -50,6 +52,7 @@ pub(super) fn current_value(app: &App, item: SettingItem) -> i32 {
         SettingItem::Rtone => app.settings.rtone as i32,
         SettingItem::Contrast => app.settings.contrast as i32,
         SettingItem::ScanMd => app.settings.scan_mode as i32,
+        SettingItem::Rit => app.settings.rit_offset as i32,
         SettingItem::Info => app.settings_ui.info_page as i32,
         _ => 0,
     }
@@ -79,6 +82,7 @@ pub(super) fn adjust(app: &mut App, syst: &mut SYST, item: SettingItem, up: bool
         SettingItem::Rtone => clamp_step(cur, up, 0, 3),
         SettingItem::Contrast => clamp_step(cur, up, 0, 4),
         SettingItem::ScanMd => clamp_step(cur, up, 0, 2),
+        SettingItem::Rit => clamp_step(cur, up, -127, 127),
         SettingItem::Offse => {
             if up {
                 cur.saturating_add(side_step_hz as i32)
@@ -157,6 +161,14 @@ pub(super) fn apply(app: &mut App, syst: &mut SYST, item: SettingItem, v: i32) {
         SettingItem::Rtone => app.settings.rtone = v as u8,
         SettingItem::Contrast => app.settings.contrast = v as u8,
         SettingItem::ScanMd => app.settings.scan_mode = v as u8,
+        SettingItem::Rit => {
+            app.settings.rit_offset = v as i8;
+            app.radio.set_rit_offset(v * RIT_STEP_HZ);
+            // Only actually affects a tuned frequency while listening in
+            // USB, but re-tuning now (rather than waiting for the next
+            // unrelated RX restart) makes it feel live while dialing it in.
+            app.commit_side_change(syst);
+        }
         _ => {}
     }
 }
@@ -298,6 +310,14 @@ pub fn value_text<W: Write>(app: &App, w: &mut W) {
                     _ => "CARR",
                 }
             );
+        }
+        SettingItem::Rit => {
+            let hz = current_value(app, item) * RIT_STEP_HZ;
+            let _ = if hz == 0 {
+                write!(w, "0Hz")
+            } else {
+                write!(w, "{:+}Hz", hz)
+            };
         }
         _ => {
             let _ = write!(w, "{}", current_value(app, item));
