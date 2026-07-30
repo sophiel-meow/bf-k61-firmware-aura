@@ -75,7 +75,7 @@ where
     let bars = level.saturating_sub(2).min(4);
     let fill = battery_fill_segment();
     for slot in (4 - bars)..4 {
-        let fx = x + 2 + slot as i32 * 3;
+        let fx = x + 4 + slot as i32 * 3;
         Image::new(&fill, Point::new(fx, y)).draw(target).ok();
     }
 }
