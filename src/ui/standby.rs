@@ -1,6 +1,6 @@
 use super::TextBuf;
 use crate::app::{self, ChannelDisplayMode};
-use crate::device::radio::{Power, SubAudio};
+use crate::device::radio::{Modulation, Power, SubAudio};
 use core::fmt::Write as _;
 use embedded_graphics::image::Image;
 use embedded_graphics::mono_font::{
@@ -321,13 +321,16 @@ fn tone_mode_label(tx: SubAudio, rx: SubAudio) -> &'static str {
     }
 }
 
-/// Info line: modulation (always "FM"), TX power, subaudio tone, and
-/// repeater shift direction
-/// TODO: AM modulation
+/// Info line: modulation, TX power, subaudio tone, and
+/// repeater shift direction.
 fn draw_mode_line<D>(lcd: &mut D, app: &app::App, i: usize, baseline_y: i32)
 where
     D: DrawTarget<Color = BinaryColor>,
 {
+    let modulation = match app.side_modulation(i) {
+        Modulation::Fm => "FM",
+        Modulation::Am => "AM",
+    };
     let power = match app.side_power(i) {
         Power::Low => "Lo",
         Power::Mid => "Md",
@@ -345,7 +348,7 @@ where
     };
 
     let mut line: TextBuf<20> = TextBuf::new();
-    write!(line, "FM {} {} {}", power, tone, dir).ok();
+    write!(line, "{} {} {} {}", modulation, power, tone, dir).ok();
     Text::new(
         line.as_str(),
         Point::new(2, baseline_y),

@@ -5,7 +5,7 @@ mod settings_ops;
 mod side;
 
 use crate::device::keypad::{KeyEvent, KeyEventKind, KeyId, Keypad};
-use crate::device::radio::{ChannelConfig, Power, Radio, SubAudio};
+use crate::device::radio::{ChannelConfig, Modulation, Power, Radio, SubAudio};
 use crate::device::storage::Storage;
 use crate::flash_map::{self, addr};
 use cortex_m::peripheral::SYST;
@@ -356,6 +356,7 @@ impl App {
         radio.set_power(sides[0].cfg.power);
         radio.set_subaudio_tx(sides[0].cfg.subaudio_tx);
         radio.set_subaudio_rx(sides[0].cfg.subaudio_rx);
+        radio.set_modulation(sides[0].cfg.modulation);
         radio.set_sql_level(syst, settings.sql_level);
         radio.set_tail_elimination(settings.tail_elimination);
         radio.set_beeps_enabled(settings.beeps_switch);
@@ -447,6 +448,7 @@ impl App {
         self.radio.set_power(s.cfg.power);
         self.radio.set_subaudio_tx(s.cfg.subaudio_tx);
         self.radio.set_subaudio_rx(s.cfg.subaudio_rx);
+        self.radio.set_modulation(s.cfg.modulation);
         if !self.transmitting {
             self.radio.enter_rx(syst);
         }
@@ -539,6 +541,15 @@ impl App {
         s.cfg.power = match s.cfg.power {
             Power::Low => Power::High,
             _ => Power::Low,
+        };
+        self.sync_watching_to_master(syst);
+    }
+
+    fn toggle_modulation(&mut self, syst: &mut SYST) {
+        let s = &mut self.sides[self.master];
+        s.cfg.modulation = match s.cfg.modulation {
+            Modulation::Fm => Modulation::Am,
+            Modulation::Am => Modulation::Fm,
         };
         self.sync_watching_to_master(syst);
     }
@@ -805,6 +816,9 @@ impl App {
     }
     pub fn side_power(&self, index: usize) -> Power {
         self.sides[index].cfg.power
+    }
+    pub fn side_modulation(&self, index: usize) -> Modulation {
+        self.sides[index].cfg.modulation
     }
     /// Repeater shift direction: 0 = off/simplex, 1 = `+`, 2 = `-`.
     pub fn side_freq_dir(&self, index: usize) -> u8 {

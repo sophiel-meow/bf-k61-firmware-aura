@@ -4,7 +4,7 @@ use crate::hal::{adc, debounce, delay};
 use cortex_m::peripheral::SYST;
 use kd32f328_pac::{gpioa, gpiof};
 
-pub use crate::drivers::fd6818::{Power, SubAudio};
+pub use crate::drivers::fd6818::{Modulation, Power, SubAudio};
 
 /// How long `end_tx()` holds the tail-elimination tone before actually
 /// cutting the carrier.
@@ -99,6 +99,7 @@ pub struct ChannelConfig {
     pub power: Power,
     pub subaudio_tx: SubAudio,
     pub subaudio_rx: SubAudio,
+    pub modulation: Modulation,
 }
 
 #[derive(Clone, Copy)]
@@ -289,6 +290,10 @@ impl Radio {
         self.cfg.subaudio_rx = sub;
     }
 
+    pub fn set_modulation(&mut self, modulation: Modulation) {
+        self.cfg.modulation = modulation;
+    }
+
     pub fn set_sql_level(&mut self, syst: &mut SYST, level: u8) {
         self.sql_level = level;
         self.fd6818.set_squelch_level(syst, self.cfg.freq_hz, level);
@@ -410,7 +415,8 @@ impl Radio {
         } else {
             AfOutState::Mute
         };
-        self.fd6818.set_af_out(syst, state, self.cfg.wide_band);
+        self.fd6818
+            .set_af_out(syst, state, self.cfg.wide_band, self.cfg.modulation);
         self.fd6818.set_scramble(syst, self.scramble_level);
     }
 
@@ -433,8 +439,12 @@ impl Radio {
         if self.audio_open && self.fd6818.tail_detected(syst) {
             self.audio_open = false;
             self.sq_debounce = 0;
-            self.fd6818
-                .set_af_out(syst, AfOutState::Mute, self.cfg.wide_band);
+            self.fd6818.set_af_out(
+                syst,
+                AfOutState::Mute,
+                self.cfg.wide_band,
+                self.cfg.modulation,
+            );
             board::set_speaker_switch(self.gpiob, false);
             return false;
         }
@@ -467,7 +477,8 @@ impl Radio {
                 } else {
                     AfOutState::Mute
                 };
-                self.fd6818.set_af_out(syst, state, self.cfg.wide_band);
+                self.fd6818
+                    .set_af_out(syst, state, self.cfg.wide_band, self.cfg.modulation);
                 board::set_speaker_switch(self.gpiob, open);
             }
         } else {
@@ -498,8 +509,12 @@ impl Radio {
         self.fd6818.enable_rx_subaudio(syst, self.cfg.subaudio_rx);
         self.fd6818.rx_on(syst);
 
-        self.fd6818
-            .set_af_out(syst, AfOutState::Mute, self.cfg.wide_band);
+        self.fd6818.set_af_out(
+            syst,
+            AfOutState::Mute,
+            self.cfg.wide_band,
+            self.cfg.modulation,
+        );
         self.audio_open = false;
         self.sq_debounce = 0;
         self.rssi_open = false;
@@ -519,7 +534,7 @@ impl Radio {
 
     #[must_use]
     pub fn enter_tx(&mut self, syst: &mut SYST) -> bool {
-        if !self.tx_allowed.allows(self.cfg.tx_freq_hz) {
+        if !self.tx_allowed.allows(self.cfg.tx_freq_hz) || self.cfg.modulation != Modulation::Fm {
             return false;
         }
         board::set_speaker_switch(self.gpiob, false);

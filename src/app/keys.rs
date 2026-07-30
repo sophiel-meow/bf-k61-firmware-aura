@@ -82,6 +82,7 @@ fn dispatch_standby(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
                 KeyId::Vm => app.toggle_vfo_channel(syst),
                 KeyId::Ab => app.switch_side(syst),
                 KeyId::Asterisk => app.toggle_reverse(syst),
+                KeyId::Band => app.toggle_modulation(syst),
                 KeyId::Menu => enter_app_menu(app),
                 _ => {}
             }

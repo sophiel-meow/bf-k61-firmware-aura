@@ -17,7 +17,7 @@ use panic_halt as _;
 use device::display::{Backlight, Display};
 use device::keypad::Keypad;
 use device::power::Power;
-use device::radio::{AniConfig, ChannelConfig, Power as TxPower, Radio, SubAudio};
+use device::radio::{AniConfig, ChannelConfig, Modulation, Power as TxPower, Radio, SubAudio};
 use device::storage::Storage;
 use drivers::{display_spec, fd6818, norflash};
 use hal::{clock, delay, hal_shim, scheduler, spi, uart};
@@ -149,6 +149,7 @@ fn main() -> ! {
             power: TxPower::Low,
             subaudio_tx: SubAudio::None,
             subaudio_rx: SubAudio::None,
+            modulation: Modulation::Fm,
         },
         ani,
     );
@@ -165,6 +166,7 @@ fn main() -> ! {
             power: TxPower::Low,
             subaudio_tx: SubAudio::None,
             subaudio_rx: SubAudio::Ctcss(885),
+            modulation: Modulation::Fm,
         },
         &mut cp.SYST,
     );

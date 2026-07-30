@@ -241,6 +241,11 @@ const AF_STATE_FSK_TEST: u16 = 0x0800;
 /// Beep tone volume is independent of the calibrated wideband/narrowband
 /// levels: fixed digital gain 10, analog gain 2.
 const AF_OUT_BEEP_VOLUME: u16 = 0xB800 | (10 << 4) | 2;
+/// Extra REG 0x47 bit set while demodulating AM audio out (RX only).
+const AM_AF_OUT_BIT: u16 = 0x0600;
+/// REG_VOLUME is fixed to this value in AM mode instead of the calibrated
+/// wideband/narrowband level.
+const AM_VOLUME_FIXED: u16 = 0xB3AA;
 
 /// REG 0x71: single-tone oscillator frequency (shared by the UI key-beep,
 /// the 1750Hz repeater tone, and the roger beep).
@@ -267,6 +272,12 @@ pub enum AfOutState {
     Beep,
     CtcDcsTest,
     FskTest,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Modulation {
+    Fm,
+    Am,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -412,7 +423,8 @@ impl<'a> Fd6818<'a> {
     /// The caller is responsible for `RfOff()`'s other two effects: the
     /// speaker amp and the RX front-end band pins (`board::set_rx_band_off`).
     pub fn rf_off(&mut self, syst: &mut SYST) {
-        self.set_af_out(syst, AfOutState::Mute, true);
+        // Modulation only changes the AfOutState::RxAudio path; irrelevant here.
+        self.set_af_out(syst, AfOutState::Mute, true, Modulation::Fm);
         self.set_gpio_bit(syst, GPIO2, false);
         self.set_gpio_bit(syst, GPIO3, false);
     }
@@ -455,7 +467,8 @@ impl<'a> Fd6818<'a> {
             REG_STATE,
             if key_tx { STATE_TX_TONE } else { STATE_TONE },
         );
-        self.set_af_out(syst, AfOutState::Beep, true);
+        // Beep volume is fixed regardless of modulation; irrelevant here.
+        self.set_af_out(syst, AfOutState::Beep, true, Modulation::Fm);
 
         self.write_reg(
             syst,
@@ -665,7 +678,9 @@ impl<'a> Fd6818<'a> {
     /// Selects what REG 0x47 routes to the audio-out pin and switches
     /// REG_VOLUME (0x48) alongside it. `wide` selects which calibrated
     /// volume level applies when the state isn't a fixed-volume tone.
-    pub fn set_af_out(&mut self, syst: &mut SYST, state: AfOutState, wide: bool) {
+    /// In `Modulation::Am`, RX audio gets an extra REG 0x47 bit and a fixed
+    /// REG_VOLUME value instead of the wideband/narrowband calibration.
+    pub fn set_af_out(&mut self, syst: &mut SYST, state: AfOutState, wide: bool, modulation: Modulation) {
         let state_bits = match state {
             AfOutState::Mute => AF_STATE_MUTE,
             AfOutState::RxAudio => AF_STATE_RX_AUDIO,
@@ -674,10 +689,16 @@ impl<'a> Fd6818<'a> {
             AfOutState::CtcDcsTest => AF_STATE_CTC_DCS_TEST,
             AfOutState::FskTest => AF_STATE_FSK_TEST,
         };
-        self.write_reg(syst, REG_AF_OUT, AF_OUT_BASE | state_bits);
+        let mut af_out = AF_OUT_BASE | state_bits;
+        if modulation == Modulation::Am && state == AfOutState::RxAudio {
+            af_out |= AM_AF_OUT_BIT;
+        }
+        self.write_reg(syst, REG_AF_OUT, af_out);
 
         let vol_reg = if state == AfOutState::Beep {
             AF_OUT_BEEP_VOLUME
+        } else if modulation == Modulation::Am {
+            AM_VOLUME_FIXED
         } else {
             let vol = (if wide {
                 self.vol_wideband
