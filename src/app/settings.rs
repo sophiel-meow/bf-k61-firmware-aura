@@ -4,6 +4,7 @@ pub enum SettingItem {
     Step,
     Tot,
     Tdr,
+    Save,
     BusyLock,
     TxForbid,
     Wn,
@@ -27,11 +28,12 @@ pub enum SettingItem {
     Reset,
 }
 
-pub const SETTINGS_ORDER: [SettingItem; 25] = [
+pub const SETTINGS_ORDER: [SettingItem; 26] = [
     SettingItem::Sql,
     SettingItem::Step,
     SettingItem::Tot,
     SettingItem::Tdr,
+    SettingItem::Save,
     SettingItem::BusyLock,
     SettingItem::TxForbid,
     SettingItem::Wn,
@@ -62,6 +64,7 @@ impl SettingItem {
             SettingItem::Step => "STEP",
             SettingItem::Tot => "TOT",
             SettingItem::Tdr => "TDR",
+            SettingItem::Save => "SAVE",
             SettingItem::BusyLock => "BCL",
             SettingItem::TxForbid => "TXINH",
             SettingItem::Wn => "W/N",

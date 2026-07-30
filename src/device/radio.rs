@@ -594,6 +594,10 @@ impl Radio {
         self.enter_rx(syst);
     }
 
+    pub fn rf_sleep(&mut self, syst: &mut SYST) {
+        self.fd6818.sleep(syst);
+    }
+
     pub fn tune_search_candidate(&mut self, syst: &mut SYST, freq_hz: u32, uhf_path: bool) {
         self.fd6818.idle(syst);
         self.fd6818.set_frequency_hz(syst, freq_hz);

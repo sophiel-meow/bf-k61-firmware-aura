@@ -341,6 +341,9 @@ pub struct Settings {
     /// `Modulation::Usb` is active: units of 10Hz (the hardware's own
     /// minimum tuning step), full `i8` range so +/-127 steps = +/-1270Hz.
     pub rit_offset: i8,
+    /// RX duty-cycle power-save level, 0 (off) - 4. Controls how long the
+    /// RFIC is powered down between brief wake-and-listen samples
+    pub save_level: u8,
 }
 
 impl Settings {
@@ -361,9 +364,10 @@ impl Settings {
         rtone: 2,
         scan_mode: 1,
         rit_offset: 0,
+        save_level: 0,
     };
 
-    pub fn from_bytes(buf: &[u8; 16]) -> Settings {
+    pub fn from_bytes(buf: &[u8; 17]) -> Settings {
         Settings {
             sql_level: buf[0],
             tail_elimination: buf[1] != 0,
@@ -381,10 +385,11 @@ impl Settings {
             rtone: buf[13].min(3),
             scan_mode: buf[14].min(2),
             rit_offset: (buf[15] as i8).clamp(-127, 127),
+            save_level: buf[16].min(4),
         }
     }
 
-    pub fn to_bytes(&self) -> [u8; 16] {
+    pub fn to_bytes(&self) -> [u8; 17] {
         [
             self.sql_level,
             self.tail_elimination as u8,
@@ -402,6 +407,7 @@ impl Settings {
             self.rtone,
             self.scan_mode,
             self.rit_offset as u8,
+            self.save_level,
         ]
     }
 

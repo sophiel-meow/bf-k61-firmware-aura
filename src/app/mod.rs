@@ -28,6 +28,10 @@ const TICKS_PER_SECOND: u16 = 100;
 
 const ANI_DISPLAY_HOLD_TICKS: u16 = 500;
 
+const POWER_SAVE_IDLE_TICKS: u16 = 1000;
+const POWER_SAVE_AWAKE_TICKS: u16 = 10;
+const POWER_SAVE_SLEEP_TICKS_PER_LEVEL: u16 = 10;
+
 const VOX_THRESHOLD_TABLE: [u8; 11] = [127, 52, 62, 72, 84, 95, 106, 117, 125, 132, 140];
 const VOX_TX_HYSTERESIS: u8 = 8;
 const VOX_WORK_HOLD_TICKS: u8 = 100;
@@ -305,8 +309,10 @@ pub struct App {
 
     channel_display_mode: ChannelDisplayMode,
 
-    // TODO: power save
     power_save: bool,
+    ps_asleep: bool,
+    ps_idle_ticks: u16,
+    ps_cycle_ticks: u16,
 
     scan: scan::ScanState,
     search: search::SearchState,
@@ -410,6 +416,9 @@ impl App {
             battery_bars: 4,
             channel_display_mode: ChannelDisplayMode::Frequency,
             power_save: false,
+            ps_asleep: false,
+            ps_idle_ticks: POWER_SAVE_IDLE_TICKS,
+            ps_cycle_ticks: 0,
             scan: scan::ScanState::new(),
             search: search::SearchState::new(),
             scanqt: scanqt::ScanQtState::new(),
@@ -429,6 +438,9 @@ impl App {
         if !self.dual_standby || self.mode != Mode::Standby || self.transmitting {
             return;
         }
+        if self.power_save {
+            return;
+        }
         if signal_present {
             self.dual_hold_ticks = DUAL_STANDBY_HOLD_TICKS;
             return;
@@ -440,6 +452,70 @@ impl App {
         self.dual_hold_ticks = DUAL_STANDBY_HOLD_TICKS;
         self.watching = 1 - self.watching;
         self.apply_watching_to_radio(syst);
+    }
+
+    fn note_power_save_activity(&mut self, syst: &mut SYST) {
+        if self.ps_asleep {
+            self.radio.enter_rx(syst);
+            self.ps_asleep = false;
+        }
+        self.power_save = false;
+        self.ps_idle_ticks = POWER_SAVE_IDLE_TICKS;
+        self.ps_cycle_ticks = 0;
+    }
+
+    fn reset_power_save(&mut self, syst: &mut SYST) {
+        self.note_power_save_activity(syst);
+    }
+
+    pub fn power_save_is_asleep(&self) -> bool {
+        self.ps_asleep
+    }
+
+    pub fn poll_power_save(&mut self, syst: &mut SYST) {
+        if self.settings.save_level == 0 || self.mode != Mode::Standby || self.transmitting {
+            if self.ps_idle_ticks != POWER_SAVE_IDLE_TICKS || self.ps_asleep {
+                self.note_power_save_activity(syst);
+            }
+            return;
+        }
+
+        if !self.ps_asleep && (self.radio.rssi_open() || self.radio.audio_is_open()) {
+            self.power_save = false;
+            self.ps_idle_ticks = POWER_SAVE_IDLE_TICKS;
+            self.ps_cycle_ticks = 0;
+            return;
+        }
+
+        if self.ps_idle_ticks > 0 {
+            self.ps_idle_ticks -= 1;
+            return;
+        }
+
+        self.power_save = true;
+        if self.ps_cycle_ticks > 0 {
+            self.ps_cycle_ticks -= 1;
+            return;
+        }
+
+        if self.ps_asleep {
+            self.radio.enter_rx(syst);
+            self.ps_asleep = false;
+            self.ps_cycle_ticks = POWER_SAVE_AWAKE_TICKS;
+        } else {
+            // About to sleep: if dual-standby is on, hand the *next* wake
+            // to the other side. Only the cached config is pushed here,
+            // the side we just woke up on already got its fair squelch
+            // check during the awake window that's ending now.
+            if self.dual_standby {
+                self.watching = 1 - self.watching;
+                self.push_watching_config();
+            }
+            self.radio.rf_sleep(syst);
+            self.ps_asleep = true;
+            self.ps_cycle_ticks =
+                self.settings.save_level as u16 * POWER_SAVE_SLEEP_TICKS_PER_LEVEL;
+        }
     }
 
     // persistence
@@ -461,7 +537,9 @@ impl App {
     }
 
     // radio sync
-    fn apply_watching_to_radio(&mut self, syst: &mut SYST) {
+    /// Pushes `sides[watching]`'s config into `Radio`'s cache without
+    /// touching hardware
+    fn push_watching_config(&mut self) {
         let s = &self.sides[self.watching];
         self.radio.set_frequency(s.cfg.freq_hz);
         self.radio.set_tx_frequency(s.cfg.tx_freq_hz);
@@ -469,6 +547,10 @@ impl App {
         self.radio.set_subaudio_tx(s.cfg.subaudio_tx);
         self.radio.set_subaudio_rx(s.cfg.subaudio_rx);
         self.radio.set_modulation(s.cfg.modulation);
+    }
+
+    fn apply_watching_to_radio(&mut self, syst: &mut SYST) {
+        self.push_watching_config();
         if !self.transmitting {
             self.radio.enter_rx(syst);
         }
@@ -726,6 +808,7 @@ impl App {
     }
 
     pub fn set_ptt(&mut self, syst: &mut SYST, pressed: bool) {
+        self.note_power_save_activity(syst);
         if pressed && !self.transmitting {
             // Scan/Search/ScanQt all leave normal standby, no TX while
             // in any of them
@@ -912,7 +995,6 @@ impl App {
     pub fn dual_standby_enabled(&self) -> bool {
         self.dual_standby
     }
-    // TODO: power saving
     pub fn power_save_active(&self) -> bool {
         self.power_save
     }

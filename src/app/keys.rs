@@ -21,6 +21,7 @@ pub(super) fn dispatch(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
 
     app.reset_key_idle();
     app.vox_det_dly = VOX_HOLD_AFTER_KEY_TICKS;
+    app.note_power_save_activity(syst);
 
     // TX + Standby: only Side2 access tone works.
     if app.transmitting && app.mode == Mode::Standby {

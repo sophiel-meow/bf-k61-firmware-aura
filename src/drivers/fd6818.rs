@@ -384,6 +384,10 @@ const POWER_UP_VALUE: u16 = 0x1D0F;
 /// RX-mode value for REG_POWER (0x37) — same base as `POWER_UP_VALUE` but
 /// with BIT9 (0x200) set
 const POWER_RX_VALUE: u16 = 0x1F0F;
+/// REG_POWER (0x37) value for RX duty-cycle power-save: same base as
+/// `POWER_UP_VALUE` but with the low nibble (xtal-osc enable + bandgap-ref
+/// enable) cleared
+const POWER_SLEEP_VALUE: u16 = POWER_UP_VALUE & 0xFFF0;
 /// dev_sh=0x4, dev_lvl=0xE0, GAIN = (256 + 224) >> 4 = 30.
 const DEVIATION_VALUE: u16 = 0x04E0;
 const MIC_SENS_VALUE: u16 = 0xE952;
@@ -1027,6 +1031,11 @@ impl<'a> Fd6818<'a> {
 
     pub fn wake(&mut self, syst: &mut SYST) {
         self.write_reg(syst, REG_POWER, POWER_UP_VALUE);
+    }
+
+    pub fn sleep(&mut self, syst: &mut SYST) {
+        self.write_reg(syst, REG_STATE, 0x0000);
+        self.write_reg(syst, REG_POWER, POWER_SLEEP_VALUE);
     }
 
     /// Sets REG_POWER (0x37) to the RX-specific value (`0x1F0F`, with BIT9).

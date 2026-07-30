@@ -238,14 +238,17 @@ fn main() -> ! {
 
         // RX path
         if !app.is_transmitting() {
-            app.poll_squelch(&mut cp.SYST, 3);
-            app.poll_dual_standby(&mut cp.SYST, app.rssi_open());
-            app.poll_dtmf(&mut cp.SYST);
+            if !app.power_save_is_asleep() {
+                app.poll_squelch(&mut cp.SYST, 3);
+                app.poll_dual_standby(&mut cp.SYST, app.rssi_open());
+                app.poll_dtmf(&mut cp.SYST);
+            }
+            app.poll_power_save(&mut cp.SYST);
         }
 
         // Screen: redraw on every_50ms regardless of TX/RX
         if due.every_50ms {
-            if !app.is_transmitting() {
+            if !app.is_transmitting() && !app.power_save_is_asleep() {
                 let rssi = app.radio_mut().rssi(&mut cp.SYST);
                 writeln!(
                     dbg,

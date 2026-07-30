@@ -68,7 +68,6 @@ where
             .draw(lcd)
             .ok();
     } else {
-        // TODO: power saving
         if app.power_save_active() {
             Text::new("PS", Point::new(0, FONT_5X8.baseline as i32), small)
                 .draw(lcd)
