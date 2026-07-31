@@ -231,6 +231,7 @@ fn main() -> ! {
 
         // VOX
         let mic_level = app.radio_mut().read_mic_level();
+        app.set_mic_level(mic_level);
         let audio_open = app.radio_mut().audio_is_open();
         app.poll_vox(&mut cp.SYST, mic_level, audio_open);
 
@@ -271,6 +272,7 @@ fn main() -> ! {
         if due.every_50ms {
             if !app.is_transmitting() && !app.power_save_is_asleep() {
                 let rssi = app.radio_mut().rssi(&mut cp.SYST);
+                app.set_rssi_raw(rssi as u8);
                 writeln!(
                     dbg,
                     "RSSI: {} audio_open={} freq={} ch_mode={} ch_num={}",

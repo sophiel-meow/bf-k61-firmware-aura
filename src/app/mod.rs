@@ -311,6 +311,9 @@ pub struct App {
     battery_cal: [u8; 7],
     battery_bars: u8,
 
+    rssi_raw: u8,
+    mic_level: u8,
+
     channel_display_mode: ChannelDisplayMode,
 
     power_save: bool,
@@ -428,6 +431,8 @@ impl App {
             ani_hold_ticks: 0,
             battery_cal,
             battery_bars: 4,
+            rssi_raw: 0,
+            mic_level: 0,
             channel_display_mode: ChannelDisplayMode::Frequency,
             power_save: false,
             ps_asleep: false,
@@ -793,6 +798,22 @@ impl App {
 
     pub fn battery_bars(&self) -> u8 {
         self.battery_bars
+    }
+
+    pub fn rssi_raw(&self) -> u8 {
+        self.rssi_raw
+    }
+
+    pub fn set_rssi_raw(&mut self, val: u8) {
+        self.rssi_raw = val;
+    }
+
+    pub fn mic_level(&self) -> u8 {
+        self.mic_level
+    }
+
+    pub fn set_mic_level(&mut self, level: u8) {
+        self.mic_level = level;
     }
 
     // DTMF

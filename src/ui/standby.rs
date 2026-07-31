@@ -14,7 +14,8 @@ use embedded_graphics::text::Text;
 use profont::PROFONT_14_POINT;
 
 const STATUS_HEIGHT: i32 = 8;
-const BAND_HEIGHT: i32 = 28;
+const BAND_HEIGHT: i32 = 24;
+const S_METER_HEIGHT: i32 = 8;
 const RIGHT_MARGIN: i32 = 2;
 
 pub fn draw_standby<D>(lcd: &mut D, app: &app::App)
@@ -27,9 +28,18 @@ where
         .ok();
 
     draw_status_bar(lcd, app);
-    for i in 0..2usize {
-        draw_vfo_band(lcd, app, i);
+
+    let top0 = STATUS_HEIGHT;
+    let top1 = STATUS_HEIGHT + BAND_HEIGHT + S_METER_HEIGHT;
+    draw_vfo_band(lcd, app, 0, top0);
+    draw_vfo_band(lcd, app, 1, top1);
+
+    if app.is_transmitting() {
+        draw_mic_bar(lcd, app, top0 + BAND_HEIGHT);
+    } else if app.audio_open() {
+        draw_s_meter(lcd, app, top0 + BAND_HEIGHT);
     }
+
     if app.tx_prohibited() {
         draw_tx_prohibited_overlay(lcd);
     } else {
@@ -92,11 +102,10 @@ where
     super::icons::draw_battery(lcd, 128 - RIGHT_MARGIN, 0, app.battery_bars() + 2);
 }
 
-fn draw_vfo_band<D>(lcd: &mut D, app: &app::App, i: usize)
+fn draw_vfo_band<D>(lcd: &mut D, app: &app::App, i: usize, top: i32)
 where
     D: DrawTarget<Color = BinaryColor>,
 {
-    let top = STATUS_HEIGHT + i as i32 * BAND_HEIGHT;
     let is_master = i == app.master_index();
     let is_watching = i == app.watching_index();
     let transmitting_here = app.is_transmitting() && is_master;
@@ -151,9 +160,6 @@ where
     };
 
     if is_master && app.freq_input_len() > 0 {
-        // User is mid-entry on a VFO frequency: show "xxx.xxx" with dashes
-        // for not-yet-typed digits.
-        // this overrides whatever ChannelDisplayMode is currently active.
         draw_freq_input(lcd, app, top + PROFONT_14_POINT.baseline as i32);
     } else {
         match app.channel_display_mode() {
@@ -188,36 +194,11 @@ where
         }
     }
 
-    // Row C: mode/tone/power/direction line, or TX antenna+power-bars
+    // Row C: mode line (RX) or TX antenna + power bars + mic bar.
     if transmitting_here {
-        draw_tx_power_bars(lcd, app, top);
+        draw_tx_row(lcd, app, top);
     } else {
         draw_mode_line(lcd, app, i, top + BAND_HEIGHT - 1);
-    }
-}
-
-fn draw_tx_power_bars<D>(lcd: &mut D, app: &app::App, top: i32)
-where
-    D: DrawTarget<Color = BinaryColor>,
-{
-    let y = top + BAND_HEIGHT - 8;
-    let ant = super::icons::antenna();
-    Image::new(&ant, Point::new(2, y)).draw(lcd).ok();
-
-    let level = match app.side_power(app.master_index()) {
-        Power::Low => 2,
-        Power::Mid => 4,
-        Power::High => 6,
-    };
-    for k in 1..=level {
-        let h = (k as i32 + 1).min(8);
-        Rectangle::new(
-            Point::new(2 + 2 + k as i32 * 3, y + 8 - h),
-            Size::new(2, h as u32),
-        )
-        .into_styled(PrimitiveStyle::with_fill(BinaryColor::On))
-        .draw(lcd)
-        .ok();
     }
 }
 
@@ -365,6 +346,161 @@ fn dtmf_char(v: u8) -> char {
         14 => '*',
         15 => '#',
         _ => '?',
+    }
+}
+
+const BAR_SEG_PITCH: i32 = 5;
+const BAR_SEG_W: i32 = 4;
+const BAR_MAX_H: i32 = 7;
+const BAR_GAP: i32 = 1;
+const BAR_HOLLOW_COUNT: u8 = 4;
+
+fn draw_classic_bar<D>(lcd: &mut D, x: i32, base_y: i32, level: u8, total: u8)
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    let hollow_start = total.saturating_sub(BAR_HOLLOW_COUNT);
+
+    for i in 0..total {
+        if i >= level {
+            break;
+        }
+        let sx = x + i as i32 * BAR_SEG_PITCH;
+        // staircase: 1 px for the first bar, then 2, 3, … capped at max_h
+        let h = (i as i32 + 1).min(BAR_MAX_H);
+        let sy = base_y - h + 1;
+
+        let style = if i < hollow_start {
+            PrimitiveStyle::with_fill(BinaryColor::On)
+        } else {
+            PrimitiveStyle::with_stroke(BinaryColor::On, 1)
+        };
+        Rectangle::new(Point::new(sx, sy), Size::new(BAR_SEG_W as u32, h as u32))
+            .into_styled(style)
+            .draw(lcd)
+            .ok();
+    }
+}
+
+/// FD6818 REG 0x67[8:1] → approximate dBm.
+/// BK4819 uses 160;
+/// FD6818 squelch thresholds (SQL_TH_IN 85-107) suggest a larger offset.
+const FD6818_RSSI_REF_DBM: i16 = 208;
+
+/// Number of bar segments: S1..S9 (9 solid) + 4 over-S9 (hollow) = 13
+const S_METER_SEGS: u8 = 13;
+
+fn map(x: i32, in_min: i32, in_max: i32, out_min: i32, out_max: i32) -> i32 {
+    (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
+}
+
+fn s_meter_level(rssi: u8) -> u8 {
+    let dbm = rssi as i32 - FD6818_RSSI_REF_DBM as i32;
+    let pos = (-dbm).clamp(53, 141); // 53 = loudest, 141 = noise floor
+
+    if pos >= 93 {
+        // S1 … S9 spread over [141, 93]
+        map(pos, 141, 93, 1, 9).clamp(1, 9) as u8
+    } else {
+        // stronger than S9: 4 over-S9 bars (0–40 dB, 10 dB/bar)
+        let over = map(pos, 93, 53, 0, 4).clamp(0, 4);
+        (9 + over) as u8
+    }
+}
+
+fn s_meter_label(level: u8) -> &'static str {
+    match level {
+        0 => "S0",
+        1 => "S1",
+        2 => "S2",
+        3 => "S3",
+        4 => "S4",
+        5 => "S5",
+        6 => "S6",
+        7 => "S7",
+        8 => "S8",
+        9 => "S9",
+        10 => "+10",
+        11 => "+20",
+        12 => "+30",
+        _ => "+40",
+    }
+}
+
+fn draw_s_meter<D>(lcd: &mut D, app: &app::App, row_y: i32)
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    let rssi = app.rssi_raw();
+    let level = s_meter_level(rssi);
+    let dbm = rssi as i32 - FD6818_RSSI_REF_DBM as i32;
+
+    let mut line: TextBuf<20> = TextBuf::new();
+    write!(line, "{}dBm {}", dbm, s_meter_label(level)).ok();
+    let style = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
+    Text::new(
+        line.as_str(),
+        Point::new(2, row_y + FONT_5X8.baseline as i32),
+        style,
+    )
+    .draw(lcd)
+    .ok();
+
+    let bar_w = S_METER_SEGS as i32 * BAR_SEG_PITCH - BAR_GAP;
+    let bar_x = 128 - RIGHT_MARGIN - bar_w;
+    let base_y = row_y + S_METER_HEIGHT - 1;
+
+    draw_classic_bar(lcd, bar_x, base_y, level, S_METER_SEGS);
+}
+
+// mic bar
+const MIC_BAR_SEGS: u8 = 18;
+
+fn draw_mic_bar<D>(lcd: &mut D, app: &app::App, row_y: i32)
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    let mic = app.mic_level();
+    let level = ((mic as u16 * MIC_BAR_SEGS as u16 + 127) / 255).min(MIC_BAR_SEGS as u16) as u8;
+
+    let label_style = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
+    Text::new(
+        "MIC",
+        Point::new(2, row_y + FONT_5X8.baseline as i32),
+        label_style,
+    )
+    .draw(lcd)
+    .ok();
+
+    let bar_x = 2 + 3 * FONT_5X8.character_size.width as i32 + 2;
+    let base_y = row_y + S_METER_HEIGHT - 1;
+
+    draw_classic_bar(lcd, bar_x, base_y, level, MIC_BAR_SEGS);
+}
+
+fn draw_tx_row<D>(lcd: &mut D, app: &app::App, top: i32)
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    let y = top + BAND_HEIGHT - 8;
+
+    let ant = super::icons::antenna();
+    Image::new(&ant, Point::new(2, y)).draw(lcd).ok();
+
+    let pwr = match app.side_power(app.master_index()) {
+        Power::Low => 2,
+        Power::Mid => 4,
+        Power::High => 6,
+    };
+    for k in 1..=pwr {
+        let h = (k as i32 + 1).min(8);
+        Rectangle::new(
+            Point::new(2 + 2 + k as i32 * 3, y + 8 - h),
+            Size::new(2, h as u32),
+        )
+        .into_styled(PrimitiveStyle::with_fill(BinaryColor::On))
+        .draw(lcd)
+        .ok();
     }
 }
 
