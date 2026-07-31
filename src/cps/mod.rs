@@ -117,7 +117,10 @@ fn handle_read(app: &mut App, dbg: &mut DebugUart, wire_addr: u16) {
             .storage_mut()
             .load_settings()
             .unwrap_or(flash_map::Settings::DEFAULT);
-        buf[..19].copy_from_slice(&settings.to_bytes());
+        // The CPS wire protocol only knows the original 19-byte settings
+        // block; the trailing programmable-key bytes are this rewrite's own
+        // addition and have no home on the wire, so only the prefix is sent.
+        buf[..19].copy_from_slice(&settings.to_bytes()[..19]);
         Some(19)
     } else if logical == addr::FM_ADDR {
         let channels = app
@@ -159,7 +162,16 @@ fn handle_write(app: &mut App, dbg: &mut DebugUart, wire_addr: u16, data: &[u8])
         app.storage_mut().save_vfo_raw(&raw);
         true
     } else if logical == addr::RADIO_IMFOS_ADDR && data.len() == 19 {
-        let raw: [u8; 19] = data.try_into().unwrap();
+        // Merge onto the currently-stored settings rather than a fresh
+        // all-zero record, so a CPS write (which only ever sends the
+        // original 19-byte block) can't silently wipe the trailing
+        // programmable-key bytes it has no knowledge of.
+        let current = app
+            .storage_mut()
+            .load_settings()
+            .unwrap_or(flash_map::Settings::DEFAULT);
+        let mut raw = current.to_bytes();
+        raw[..19].copy_from_slice(data);
         app.storage_mut()
             .save_settings(&flash_map::Settings::from_bytes(&raw));
         true

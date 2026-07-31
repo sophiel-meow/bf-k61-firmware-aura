@@ -1,20 +1,21 @@
 use super::list::{draw_list, ListSource};
 use crate::app;
+use core::fmt::Write;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
 
 struct SettingsSource<'a>(&'a app::App);
 
 impl<'a> ListSource for SettingsSource<'a> {
-    fn row_count(&self) -> usize {
+    fn row_count(&mut self) -> usize {
         self.0.settings_item_count()
     }
 
-    fn label(&self, index: usize) -> &'static str {
-        self.0.settings_label_at(index)
+    fn label(&mut self, index: usize, w: &mut dyn core::fmt::Write) {
+        let _ = write!(w, "{}", self.0.settings_label_at(index));
     }
 
-    fn value(&self, index: usize, w: &mut dyn core::fmt::Write) -> bool {
+    fn value(&mut self, index: usize, w: &mut dyn core::fmt::Write) -> bool {
         self.0.settings_value_at(index, w);
         true
     }
@@ -25,12 +26,12 @@ pub fn draw_settings<D>(lcd: &mut D, app: &app::App)
 where
     D: DrawTarget<Color = BinaryColor>,
 {
-    let source = SettingsSource(app);
+    let mut source = SettingsSource(app);
     draw_list(
         lcd,
         "SETTINGS",
-        &source,
+        &mut source,
         app.settings_index(),
-        app.settings_editing(),
+        app.settings_show_arrows(),
     );
 }

@@ -16,22 +16,22 @@ const ARROW_H: i32 = 5;
 const ARROW_GAP: i32 = 5;
 
 pub(super) trait ListSource {
-    fn row_count(&self) -> usize;
-    fn label(&self, index: usize) -> &'static str;
-    /// Write this row's value column into `w`, returning whether anything
-    /// was written. Rows with nothing to show (plain menu entries) can just
-    /// return `false` to leave the column blank.
-    fn value(&self, _index: usize, _w: &mut dyn core::fmt::Write) -> bool {
+    fn row_count(&mut self) -> usize;
+    fn label(&mut self, index: usize, w: &mut dyn core::fmt::Write);
+    fn value(&mut self, _index: usize, _w: &mut dyn core::fmt::Write) -> bool {
         false
+    }
+    fn cursor(&mut self, _index: usize) -> Option<usize> {
+        None
     }
 }
 
 pub(super) fn draw_list<D>(
     lcd: &mut D,
     title: &str,
-    source: &dyn ListSource,
+    source: &mut dyn ListSource,
     selected: usize,
-    editing: bool,
+    show_arrows: bool,
 ) where
     D: DrawTarget<Color = BinaryColor>,
 {
@@ -67,17 +67,21 @@ pub(super) fn draw_list<D>(
         };
         let baseline = row_top + FONT_6X10.baseline as i32;
 
+        let mut label: TextBuf<16> = TextBuf::new();
+        source.label(index, &mut label);
         Text::new(
-            source.label(index),
+            label.as_str(),
             Point::new(4, baseline),
             MonoTextStyle::new(&FONT_6X10, fg),
         )
         .draw(lcd)
         .ok();
 
-        let mut value: TextBuf<12> = TextBuf::new();
+        let mut value: TextBuf<14> = TextBuf::new();
         if source.value(index, &mut value) {
-            if is_selected && editing {
+            if let Some(cursor) = source.cursor(index) {
+                draw_value_with_cursor(lcd, value.as_str(), cursor, row_top, baseline, fg);
+            } else if is_selected && show_arrows {
                 draw_editing_value(lcd, value.as_str(), row_top, fg);
             } else {
                 draw_value(lcd, value.as_str(), baseline, fg);
@@ -124,6 +128,48 @@ where
     )
     .draw(lcd)
     .ok();
+}
+
+fn draw_value_with_cursor<D>(
+    lcd: &mut D,
+    text: &str,
+    cursor_index: usize,
+    row_top: i32,
+    baseline_y: i32,
+    fg: BinaryColor,
+) where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    draw_value(lcd, text, baseline_y, fg);
+
+    let char_w = FONT_6X10.character_size.width as i32;
+    let width = text.chars().count() as i32 * char_w;
+    let x0 = 128 - RIGHT_MARGIN - width;
+
+    if let Some(ch) = text.chars().nth(cursor_index) {
+        let cursor_x = x0 + cursor_index as i32 * char_w;
+        let inverted = if fg == BinaryColor::On {
+            BinaryColor::Off
+        } else {
+            BinaryColor::On
+        };
+        Rectangle::new(
+            Point::new(cursor_x, row_top),
+            Size::new(char_w as u32, ROW_HEIGHT as u32),
+        )
+        .into_styled(PrimitiveStyle::with_fill(fg))
+        .draw(lcd)
+        .ok();
+
+        let mut ch_buf = [0u8; 4];
+        Text::new(
+            ch.encode_utf8(&mut ch_buf),
+            Point::new(cursor_x, baseline_y),
+            MonoTextStyle::new(&FONT_6X10, inverted),
+        )
+        .draw(lcd)
+        .ok();
+    }
 }
 
 fn draw_editing_value<D>(lcd: &mut D, text: &str, row_top: i32, fg: BinaryColor)

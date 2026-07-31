@@ -181,6 +181,7 @@ pub struct Radio {
     dtmf_rx_timeout: u8,
 
     tx_allowed: FreqRanges,
+    monitor: bool,
 }
 
 impl Radio {
@@ -215,6 +216,7 @@ impl Radio {
             dtmf_rx_len: 0,
             dtmf_rx_timeout: 0,
             tx_allowed: FreqRanges::hardware(),
+            monitor: false,
         }
     }
 
@@ -458,6 +460,14 @@ impl Radio {
         self.fd6818.set_scramble(syst, self.scramble_level);
     }
 
+    pub fn toggle_monitor(&mut self) {
+        self.monitor = !self.monitor;
+    }
+
+    pub fn is_monitor(&self) -> bool {
+        self.monitor
+    }
+
     // squelch / RSSI
 
     pub fn rssi_open(&self) -> bool {
@@ -465,7 +475,7 @@ impl Radio {
     }
 
     pub fn poll_squelch(&mut self, syst: &mut SYST, debounce_ticks: u8) -> bool {
-        if self.audio_open && self.fd6818.tail_detected(syst) {
+        if self.audio_open && self.fd6818.tail_detected(syst) && !self.monitor {
             self.audio_open = false;
             self.sq_debounce = 0;
             self.fd6818.set_af_out(
@@ -485,7 +495,6 @@ impl Radio {
             if self.rssi_debounce >= debounce_ticks {
                 self.rssi_open = rssi_open;
                 self.rssi_debounce = 0;
-                board::set_rx_led(self.gpioa, self.rssi_open);
             }
         } else {
             self.rssi_debounce = 0;
@@ -495,7 +504,7 @@ impl Radio {
             SubAudio::None => true,
             SubAudio::Ctcss(_) | SubAudio::Dcs { .. } => self.fd6818.subaudio_matched(syst),
         };
-        let open = rssi_open && tone_ok;
+        let open = self.monitor || (rssi_open && tone_ok);
         if open != self.audio_open {
             self.sq_debounce += 1;
             if self.sq_debounce >= debounce_ticks {
@@ -508,6 +517,7 @@ impl Radio {
                 };
                 self.fd6818
                     .set_af_out(syst, state, self.cfg.wide_band, self.cfg.modulation);
+                board::set_rx_led(self.gpioa, open);
                 board::set_speaker_switch(self.gpiob, open);
             }
         } else {

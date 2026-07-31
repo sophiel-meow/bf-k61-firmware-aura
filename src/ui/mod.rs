@@ -1,3 +1,4 @@
+mod chanmgr;
 pub mod cps;
 mod fm;
 pub mod icons;
@@ -9,6 +10,7 @@ mod search;
 mod settings;
 mod standby;
 
+use chanmgr::draw_chanmgr;
 use fm::draw_fm;
 use launcher::draw_app_menu;
 use scan::draw_scan;
@@ -56,15 +58,16 @@ impl<const N: usize> core::fmt::Write for TextBuf<N> {
     }
 }
 
-pub fn draw<DI: WriteOnlyDataCommand>(display: &mut Display<'_, DI>, app: &app::App) {
+pub fn draw<DI: WriteOnlyDataCommand>(display: &mut Display<'_, DI>, app: &mut app::App) {
     match app.mode() {
-        app::Mode::AppMenu => draw_app_menu(display.as_draw_target(), app),
-        app::Mode::Settings => draw_settings(display.as_draw_target(), app),
-        app::Mode::Scan => draw_scan(display.as_draw_target(), app),
-        app::Mode::Search => draw_search(display.as_draw_target(), app),
-        app::Mode::ScanQt => draw_scanqt(display.as_draw_target(), app),
-        app::Mode::Fm => draw_fm(display.as_draw_target(), app),
-        _ => draw_standby(display.as_draw_target(), app),
+        app::Mode::AppMenu => draw_app_menu(display.as_draw_target(), &*app),
+        app::Mode::Settings => draw_settings(display.as_draw_target(), &*app),
+        app::Mode::ChanMgr => draw_chanmgr(display.as_draw_target(), app),
+        app::Mode::Scan => draw_scan(display.as_draw_target(), &*app),
+        app::Mode::Search => draw_search(display.as_draw_target(), &*app),
+        app::Mode::ScanQt => draw_scanqt(display.as_draw_target(), &*app),
+        app::Mode::Fm => draw_fm(display.as_draw_target(), &*app),
+        _ => draw_standby(display.as_draw_target(), &*app),
     }
     display.flush();
 }

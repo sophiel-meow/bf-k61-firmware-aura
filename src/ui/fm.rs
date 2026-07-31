@@ -20,15 +20,15 @@ const CHANNEL_LABELS: [&str; 30] = [
 struct FmSaveSource<'a>(&'a app::App);
 
 impl<'a> ListSource for FmSaveSource<'a> {
-    fn row_count(&self) -> usize {
+    fn row_count(&mut self) -> usize {
         crate::flash_map::FM_CHANNEL_COUNT
     }
 
-    fn label(&self, index: usize) -> &'static str {
-        CHANNEL_LABELS[index]
+    fn label(&mut self, index: usize, w: &mut dyn core::fmt::Write) {
+        let _ = write!(w, "{}", CHANNEL_LABELS[index]);
     }
 
-    fn value(&self, index: usize, w: &mut dyn core::fmt::Write) -> bool {
+    fn value(&mut self, index: usize, w: &mut dyn core::fmt::Write) -> bool {
         match self.0.fm_channel_freq_at(index) {
             Some(deci_mhz) => {
                 let _ = write!(w, "{}.{}", deci_mhz / 10, deci_mhz % 10);
@@ -56,9 +56,9 @@ fn draw_save_picker<D>(lcd: &mut D, app: &app::App)
 where
     D: DrawTarget<Color = BinaryColor>,
 {
-    let source = FmSaveSource(app);
+    let mut source = FmSaveSource(app);
     let selected = app.fm_save_picker_selected().unwrap_or(0) as usize;
-    draw_list(lcd, "SAVE TO", &source, selected, false);
+    draw_list(lcd, "SAVE TO", &mut source, selected, false);
 }
 
 fn draw_tuning<D>(lcd: &mut D, app: &app::App)

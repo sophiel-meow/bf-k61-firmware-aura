@@ -1,4 +1,6 @@
+mod chanmgr;
 mod fm;
+mod keyfn;
 mod keys;
 mod launcher;
 mod scan;
@@ -8,6 +10,7 @@ mod settings;
 mod settings_ops;
 mod side;
 
+use crate::device::flashlight::Flashlight;
 use crate::device::fm_radio::FmRadio;
 use crate::device::keypad::{KeyEvent, KeyEventKind, KeyId, Keypad};
 use crate::device::radio::{ChannelConfig, Modulation, Power, Radio, SubAudio};
@@ -53,6 +56,7 @@ pub enum Mode {
     Standby,
     AppMenu,
     Settings,
+    ChanMgr,
     Fm,
     Moni,
     Scan,
@@ -267,12 +271,71 @@ impl InputBuf {
     }
 }
 
+struct DigitInput<const N: usize> {
+    digits: [u8; N],
+    len: usize,
+}
+
+impl<const N: usize> DigitInput<N> {
+    const fn new() -> Self {
+        DigitInput {
+            digits: [0; N],
+            len: 0,
+        }
+    }
+    fn clear(&mut self) {
+        self.len = 0;
+    }
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+    fn is_full(&self) -> bool {
+        self.len == N
+    }
+    fn push(&mut self, digit: u8) {
+        if self.len < N {
+            self.digits[self.len] = digit;
+            self.len += 1;
+        }
+    }
+    fn backspace(&mut self) {
+        self.len = self.len.saturating_sub(1);
+    }
+    /// The full `N`-digit decimal value, untyped trailing digits as `0`.
+    fn value(&self) -> u32 {
+        let mut v: u32 = 0;
+        for i in 0..N {
+            let d = if i < self.len {
+                self.digits[i] as u32
+            } else {
+                0
+            };
+            v = v * 10 + d;
+        }
+        v
+    }
+    /// `int_digits` is how many leading digits sit before the decimal point.
+    fn write_display(&self, int_digits: usize, w: &mut dyn core::fmt::Write) {
+        for i in 0..N {
+            if i == int_digits {
+                let _ = w.write_char('.');
+            }
+            if i < self.len {
+                let _ = write!(w, "{}", self.digits[i]);
+            } else {
+                let _ = w.write_char('-');
+            }
+        }
+    }
+}
+
 // SettingsUi
 struct SettingsUi {
     index: usize,
     editing: bool,
     snapshot: i32,
     info_page: u8,
+    offset_input: DigitInput<7>,
 }
 
 impl SettingsUi {
@@ -282,7 +345,12 @@ impl SettingsUi {
             editing: false,
             snapshot: 0,
             info_page: 0,
+            offset_input: DigitInput::new(),
         }
+    }
+
+    fn is_editing(&self, index: usize) -> bool {
+        self.editing && self.index == index
     }
 }
 
@@ -290,10 +358,12 @@ pub struct App {
     pub radio: Radio,
     keypad: Keypad,
     storage: Storage,
+    flashlight: Flashlight,
     mode: Mode,
     sides: [side::Side; 2],
     settings: flash_map::Settings,
     settings_ui: SettingsUi,
+    chanmgr: chanmgr::ChanMgrUi,
     launcher_index: usize,
 
     master: usize,
@@ -313,6 +383,7 @@ pub struct App {
     vox_work_dly: u8,
     vox_active: bool,
     rtone_sounding: bool,
+    rtone_self_keyed: bool,
 
     ani_caller: Option<[u8; 3]>,
     ani_hold_ticks: u16,
@@ -346,6 +417,7 @@ impl App {
         mut radio: Radio,
         keypad: Keypad,
         mut storage: Storage,
+        flashlight: Flashlight,
         fm_radio: FmRadio<'static>,
         default_cfg: ChannelConfig,
         syst: &mut SYST,
@@ -422,6 +494,7 @@ impl App {
             sides,
             settings,
             settings_ui: SettingsUi::new(),
+            chanmgr: chanmgr::ChanMgrUi::new(),
             launcher_index: 0,
             master: 0,
             watching: 0,
@@ -430,6 +503,7 @@ impl App {
             key_lock: false,
             transmitting: false,
             tx_prohibited: false,
+            flashlight,
             dual_standby: settings.dual_standby,
             dual_hold_ticks: DUAL_STANDBY_HOLD_TICKS,
             tot_ticks: 0,
@@ -438,6 +512,7 @@ impl App {
             vox_work_dly: 0,
             vox_active: false,
             rtone_sounding: false,
+            rtone_self_keyed: false,
             ani_caller: None,
             ani_hold_ticks: 0,
             battery_cal,
@@ -473,6 +548,14 @@ impl App {
             return;
         }
         if self.power_save {
+            return;
+        }
+        if self.radio.is_monitor() {
+            if self.watching != self.master {
+                self.watching = self.master;
+                self.apply_watching_to_radio(syst);
+            }
+            self.dual_hold_ticks = DUAL_STANDBY_HOLD_TICKS;
             return;
         }
         if signal_present {
@@ -738,6 +821,12 @@ impl App {
         self.sync_watching_to_master(syst);
     }
 
+    fn toggle_wide_narrow(&mut self, syst: &mut SYST) {
+        let s = &mut self.sides[self.master];
+        s.cfg.wide_band = !s.cfg.wide_band;
+        self.commit_side_change(syst);
+    }
+
     fn toggle_modulation(&mut self, syst: &mut SYST) {
         let s = &mut self.sides[self.master];
         s.cfg.modulation = match s.cfg.modulation {
@@ -908,8 +997,12 @@ impl App {
     }
 
     // settings UI
-    pub fn settings_editing(&self) -> bool {
-        settings_ops::editing(self)
+    /// Whether to draw the up/down arrow chrome around the selected row's
+    /// value: true for a cycled Settings item, false while it's in
+    /// text-entry mode
+    pub fn settings_show_arrows(&self) -> bool {
+        self.settings_ui.editing
+            && settings::SETTINGS_ORDER[self.settings_ui.index] != settings::SettingItem::Offse
     }
 
     pub fn settings_index(&self) -> usize {
@@ -925,7 +1018,49 @@ impl App {
     }
 
     pub fn settings_value_at(&self, index: usize, w: &mut dyn core::fmt::Write) {
-        settings_ops::value_text_for(self, settings::SETTINGS_ORDER[index], w)
+        settings_ops::value_text_for(self, index, settings::SETTINGS_ORDER[index], w)
+    }
+
+    // channel manager UI
+    pub fn chanmgr_is_detail(&self) -> bool {
+        chanmgr::is_detail(self)
+    }
+    pub fn chanmgr_list_row_count(&self) -> usize {
+        chanmgr::list_row_count(self)
+    }
+    pub fn chanmgr_list_selected_index(&self) -> usize {
+        chanmgr::list_selected_index(self)
+    }
+    /// Reads flash for the currently-visible rows' channel names, so this
+    /// needs `&mut self`.
+    pub fn chanmgr_list_label(&mut self, index: usize, w: &mut dyn core::fmt::Write) {
+        chanmgr::list_label(self, index, w)
+    }
+    pub fn chanmgr_field_count(&self) -> usize {
+        chanmgr::detail_field_count(self)
+    }
+    pub fn chanmgr_field_index(&self) -> usize {
+        chanmgr::detail_field_index(self)
+    }
+    /// Whether to draw the up/down arrow chrome: true only for a field that
+    /// actually cycles via `Up`/`Down`, false for the text-entry fields
+    pub fn chanmgr_show_arrows(&self) -> bool {
+        chanmgr::detail_show_arrows(self)
+    }
+    pub fn chanmgr_field_label(&self, index: usize, w: &mut dyn core::fmt::Write) {
+        chanmgr::detail_label(self, index, w)
+    }
+    pub fn chanmgr_field_value(&self, index: usize, w: &mut dyn core::fmt::Write) -> bool {
+        chanmgr::detail_value(self, index, w)
+    }
+    pub fn chanmgr_field_cursor(&self, index: usize) -> Option<usize> {
+        chanmgr::detail_cursor(self, index)
+    }
+    pub fn chanmgr_detail_title(&self, w: &mut dyn core::fmt::Write) {
+        chanmgr::detail_title(self, w)
+    }
+    pub fn poll_chanmgr_name_timeout(&mut self) {
+        chanmgr::poll_name_timeout(self);
     }
 
     // PTT

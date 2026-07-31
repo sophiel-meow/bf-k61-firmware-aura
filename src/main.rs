@@ -16,6 +16,7 @@ use kd32f328_pac::Peripherals;
 use panic_halt as _;
 
 use device::display::{Backlight, Display};
+use device::flashlight::Flashlight;
 use device::fm_radio::FmRadio;
 use device::keypad::Keypad;
 use device::power::Power;
@@ -51,7 +52,7 @@ fn main() -> ! {
     power.latch_on();
 
     board::init_ptt_rxd_pin(gpioa);
-    board::init_flashlight_led(gpiob);
+    let flashlight = Flashlight::new(gpiob);
     board::init_debug_uart_tx_pin(gpioa);
     board::init_lcd_control_pins(gpiob, gpioc);
     board::init_lcd_spi_pins(gpiob);
@@ -167,6 +168,7 @@ fn main() -> ! {
         radio,
         Keypad::new(gpiob, gpioc, gpiof),
         storage,
+        flashlight,
         fm_radio,
         ChannelConfig {
             freq_hz: DEFAULT_FREQ_HZ,
@@ -231,6 +233,7 @@ fn main() -> ! {
 
         app.poll_tot(&mut cp.SYST);
         app.poll_backlight();
+        app.poll_chanmgr_name_timeout();
 
         // Scan / Search / ScanQt / Fm (each self-guards on the current mode)
         app.poll_search(&mut cp.SYST);
@@ -296,7 +299,7 @@ fn main() -> ! {
                 .ok();
             }
 
-            ui::draw(&mut display, &app);
+            ui::draw(&mut display, &mut app);
         }
         delay::ms(&mut cp.SYST, 10);
     }

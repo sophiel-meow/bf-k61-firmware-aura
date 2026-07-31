@@ -26,11 +26,17 @@ pub enum SettingItem {
     ScanMd,
     Rit,
     ChDisp,
+    Side1Short,
+    Side1Long,
+    Side2Short,
+    Side2Long,
+    BandShort,
+    BandLong,
     Info,
     Reset,
 }
 
-pub const SETTINGS_ORDER: [SettingItem; 28] = [
+pub const SETTINGS_ORDER: [SettingItem; 34] = [
     SettingItem::Sql,
     SettingItem::Step,
     SettingItem::Tot,
@@ -57,6 +63,12 @@ pub const SETTINGS_ORDER: [SettingItem; 28] = [
     SettingItem::ScanMd,
     SettingItem::Rit,
     SettingItem::ChDisp,
+    SettingItem::Side1Short,
+    SettingItem::Side1Long,
+    SettingItem::Side2Short,
+    SettingItem::Side2Long,
+    SettingItem::BandShort,
+    SettingItem::BandLong,
     SettingItem::Info,
     SettingItem::Reset,
 ];
@@ -90,6 +102,12 @@ impl SettingItem {
             SettingItem::ScanMd => "SCANMD",
             SettingItem::Rit => "RIT",
             SettingItem::ChDisp => "CHDISP",
+            SettingItem::Side1Short => "S1-SH",
+            SettingItem::Side1Long => "S1-LG",
+            SettingItem::Side2Short => "S2-SH",
+            SettingItem::Side2Long => "S2-LG",
+            SettingItem::BandShort => "BND-SH",
+            SettingItem::BandLong => "BND-LG",
             SettingItem::Info => "INFO",
             SettingItem::Reset => "RESET",
         }

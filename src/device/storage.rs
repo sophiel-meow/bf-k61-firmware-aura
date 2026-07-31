@@ -7,7 +7,7 @@ use crate::hal::wear_leveled::WearLeveledRegion;
 const VFO_REGION: WearLeveledRegion<64> = WearLeveledRegion::new(addr::VFO_INFO_ADDR, 16);
 
 /// Global settings record.
-const SETTINGS_REGION: WearLeveledRegion<19> = WearLeveledRegion::new(addr::RADIO_IMFOS_ADDR, 16);
+const SETTINGS_REGION: WearLeveledRegion<25> = WearLeveledRegion::new(addr::RADIO_IMFOS_ADDR, 16);
 
 /// FM broadcast channel list: 30 slots x u16 (little-endian deci-MHz).
 const FM_PAYLOAD_LEN: usize = flash_map::FM_CHANNEL_COUNT * 2;
@@ -169,6 +169,29 @@ impl Storage {
         }
 
         self.norflash.write_bytes(addr, &channel.to_bytes());
+    }
+
+    /// Single-channel save for on-device editing:
+    /// unlike `write_channel`, which assumes the caller is about to resend
+    /// every sibling record in the sector (true for a CPS session, not for a
+    /// one-off keypad edit), this reads the whole 4KB sector out first so
+    /// the other 127 records in it survive the erase this record's own edit
+    /// requires. Deleting a channel is just calling this with
+    /// `Channel::from_bytes(&[0xFF; 32])`: an all-erased record round-trips
+    /// through `to_bytes()` byte-for-byte, so `is_channel_empty` sees it as
+    /// blank afterward.
+    pub fn write_channel_rmw(&mut self, num: u16, channel: &flash_map::Channel) {
+        let addr = addr::CHAN_ADDR + num as u32 * addr::CHAN_SIZE;
+        let sector_addr = (addr / SECTOR_SIZE) * SECTOR_SIZE;
+
+        let mut buf = [0u8; SECTOR_SIZE as usize];
+        self.norflash.read_bytes(sector_addr, &mut buf);
+
+        let offset = (addr - sector_addr) as usize;
+        buf[offset..offset + addr::CHAN_SIZE as usize].copy_from_slice(&channel.to_bytes());
+
+        self.norflash.erase_sector(sector_addr);
+        self.norflash.write_bytes(sector_addr, &buf);
     }
 
     // factory reset

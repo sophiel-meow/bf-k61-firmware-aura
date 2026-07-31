@@ -207,9 +207,25 @@ impl Channel {
         self.flags & 0x08 != 0
     }
 
+    pub fn set_busy_lock(&mut self, on: bool) {
+        if on {
+            self.flags |= 0x08;
+        } else {
+            self.flags &= !0x08;
+        }
+    }
+
     /// `chFlag3.Bit.b2`: included in scan list.
     pub fn scan_add(&self) -> bool {
         self.flags & 0x04 != 0
+    }
+
+    pub fn set_scan_add(&mut self, on: bool) {
+        if on {
+            self.flags |= 0x04;
+        } else {
+            self.flags &= !0x04;
+        }
     }
 }
 
@@ -357,6 +373,16 @@ pub struct Settings {
     /// Standby-screen channel readout, 0-2: 0 = frequency only, 1 = channel
     /// name only, 2 = name and freq.
     pub channel_display_mode: u8,
+    /// Programmable-key function assignments: each stores a
+    /// `app::keyfn::KeyFunction` index (0..=9). `side2_short`/`band_short`/
+    /// `band_long` default to non-`None` to preserve this firmware's
+    /// pre-existing hardcoded key bindings (Side2 TX-tone, Band MODE/Search).
+    pub side1_short: u8,
+    pub side1_long: u8,
+    pub side2_short: u8,
+    pub side2_long: u8,
+    pub band_short: u8,
+    pub band_long: u8,
 }
 
 impl Settings {
@@ -380,9 +406,15 @@ impl Settings {
         save_level: 0,
         backlight_time: 2,
         channel_display_mode: 2,
+        side1_short: 8, // Flashlight
+        side1_long: 7,  // Power
+        side2_short: 2, // Monitor
+        side2_long: 3,  // Mode
+        band_short: 9,  // Search
+        band_long: 0,   // None
     };
 
-    pub fn from_bytes(buf: &[u8; 19]) -> Settings {
+    pub fn from_bytes(buf: &[u8; 25]) -> Settings {
         Settings {
             sql_level: buf[0],
             tail_elimination: buf[1] != 0,
@@ -403,10 +435,16 @@ impl Settings {
             save_level: buf[16].min(4),
             backlight_time: buf[17].min(4),
             channel_display_mode: buf[18].min(2),
+            side1_short: buf[19].min(9),
+            side1_long: buf[20].min(9),
+            side2_short: buf[21].min(9),
+            side2_long: buf[22].min(9),
+            band_short: buf[23].min(9),
+            band_long: buf[24].min(9),
         }
     }
 
-    pub fn to_bytes(&self) -> [u8; 19] {
+    pub fn to_bytes(&self) -> [u8; 25] {
         [
             self.sql_level,
             self.tail_elimination as u8,
@@ -427,6 +465,12 @@ impl Settings {
             self.save_level,
             self.backlight_time,
             self.channel_display_mode,
+            self.side1_short,
+            self.side1_long,
+            self.side2_short,
+            self.side2_long,
+            self.band_short,
+            self.band_long,
         ]
     }
 

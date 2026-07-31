@@ -1,3 +1,4 @@
+use super::keyfn;
 use super::settings::SettingItem;
 use super::{
     channel_display_mode_from_u8, clamp_step, subaudio_from_index, subaudio_index, wrap_step, App,
@@ -56,6 +57,12 @@ pub(super) fn current_value(app: &App, item: SettingItem) -> i32 {
         SettingItem::Save => app.settings.save_level as i32,
         SettingItem::Abr => app.settings.backlight_time as i32,
         SettingItem::ChDisp => app.settings.channel_display_mode as i32,
+        SettingItem::Side1Short => app.settings.side1_short as i32,
+        SettingItem::Side1Long => app.settings.side1_long as i32,
+        SettingItem::Side2Short => app.settings.side2_short as i32,
+        SettingItem::Side2Long => app.settings.side2_long as i32,
+        SettingItem::BandShort => app.settings.band_short as i32,
+        SettingItem::BandLong => app.settings.band_long as i32,
         SettingItem::Info => app.settings_ui.info_page as i32,
         _ => 0,
     }
@@ -63,7 +70,6 @@ pub(super) fn current_value(app: &App, item: SettingItem) -> i32 {
 
 pub(super) fn adjust(app: &mut App, syst: &mut SYST, item: SettingItem, up: bool) {
     let cur = current_value(app, item);
-    let side_step_hz = app.sides[app.master].step_deci_hz() * 10;
 
     let new_val = match item {
         SettingItem::Sql => clamp_step(cur, up, 0, 9),
@@ -89,13 +95,12 @@ pub(super) fn adjust(app: &mut App, syst: &mut SYST, item: SettingItem, up: bool
         SettingItem::Save => clamp_step(cur, up, 0, 4),
         SettingItem::Abr => clamp_step(cur, up, 0, 4),
         SettingItem::ChDisp => clamp_step(cur, up, 0, 2),
-        SettingItem::Offse => {
-            if up {
-                cur.saturating_add(side_step_hz as i32)
-            } else {
-                (cur - side_step_hz as i32).max(0)
-            }
-        }
+        SettingItem::Side1Short
+        | SettingItem::Side1Long
+        | SettingItem::Side2Short
+        | SettingItem::Side2Long
+        | SettingItem::BandShort
+        | SettingItem::BandLong => clamp_step(cur, up, 0, 9),
         _ => cur,
     };
     apply(app, syst, item, new_val);
@@ -179,6 +184,12 @@ pub(super) fn apply(app: &mut App, syst: &mut SYST, item: SettingItem, v: i32) {
             app.settings.channel_display_mode = v as u8;
             app.set_channel_display_mode(channel_display_mode_from_u8(v as u8));
         }
+        SettingItem::Side1Short => app.settings.side1_short = v as u8,
+        SettingItem::Side1Long => app.settings.side1_long = v as u8,
+        SettingItem::Side2Short => app.settings.side2_short = v as u8,
+        SettingItem::Side2Long => app.settings.side2_long = v as u8,
+        SettingItem::BandShort => app.settings.band_short = v as u8,
+        SettingItem::BandLong => app.settings.band_long = v as u8,
         SettingItem::Rit => {
             app.settings.rit_offset = v as i8;
             app.radio.set_rit_offset(v * RIT_STEP_HZ);
@@ -192,11 +203,7 @@ pub(super) fn apply(app: &mut App, syst: &mut SYST, item: SettingItem, v: i32) {
 }
 
 // UI getters
-pub fn editing(app: &App) -> bool {
-    app.settings_ui.editing
-}
-
-pub fn value_text_for(app: &App, item: SettingItem, w: &mut dyn Write) {
+pub fn value_text_for(app: &App, index: usize, item: SettingItem, w: &mut dyn Write) {
     if item.is_placeholder() {
         let _ = write!(w, "----");
         return;
@@ -210,7 +217,7 @@ pub fn value_text_for(app: &App, item: SettingItem, w: &mut dyn Write) {
             };
         }
         SettingItem::Reset => {
-            if app.settings_ui.editing {
+            if app.settings_ui.is_editing(index) {
                 let _ = write!(w, "Sure? MENU");
             }
         }
@@ -310,8 +317,12 @@ pub fn value_text_for(app: &App, item: SettingItem, w: &mut dyn Write) {
             }
         }
         SettingItem::Offse => {
-            let hz = current_value(app, item) as u32;
-            let _ = write!(w, "{}.{:03}k", hz / 1000, hz % 1000);
+            if app.settings_ui.is_editing(index) {
+                app.settings_ui.offset_input.write_display(3, w);
+            } else {
+                let hz = current_value(app, item) as u32;
+                let _ = write!(w, "{}.{:03}k", hz / 1000, hz % 1000);
+            }
         }
         SettingItem::ScanMd => {
             let _ = write!(
@@ -363,6 +374,15 @@ pub fn value_text_for(app: &App, item: SettingItem, w: &mut dyn Write) {
                     _ => "FREQ",
                 }
             );
+        }
+        SettingItem::Side1Short
+        | SettingItem::Side1Long
+        | SettingItem::Side2Short
+        | SettingItem::Side2Long
+        | SettingItem::BandShort
+        | SettingItem::BandLong => {
+            let idx = current_value(app, item).clamp(0, 9) as u8;
+            let _ = write!(w, "{}", keyfn::from_u8(idx).label());
         }
         _ => {
             let _ = write!(w, "{}", current_value(app, item));
