@@ -1,5 +1,5 @@
 use crate::drivers::fd6818::Power;
-use crate::drivers::norflash::NorFlash;
+use crate::drivers::norflash::{NorFlash, SECTOR_SIZE};
 use crate::flash_map::{self, addr};
 use crate::hal::wear_leveled::WearLeveledRegion;
 
@@ -7,7 +7,7 @@ use crate::hal::wear_leveled::WearLeveledRegion;
 const VFO_REGION: WearLeveledRegion<64> = WearLeveledRegion::new(addr::VFO_INFO_ADDR, 16);
 
 /// Global settings record.
-const SETTINGS_REGION: WearLeveledRegion<18> = WearLeveledRegion::new(addr::RADIO_IMFOS_ADDR, 16);
+const SETTINGS_REGION: WearLeveledRegion<19> = WearLeveledRegion::new(addr::RADIO_IMFOS_ADDR, 16);
 
 /// FM broadcast channel list: 30 slots x u16 (little-endian deci-MHz).
 const FM_PAYLOAD_LEN: usize = flash_map::FM_CHANNEL_COUNT * 2;
@@ -15,11 +15,19 @@ const FM_REGION: WearLeveledRegion<FM_PAYLOAD_LEN> = WearLeveledRegion::new(addr
 
 pub struct Storage {
     norflash: NorFlash<'static>,
+    /// Bit `n` set = the channel-table sector `n` has already been erased
+    /// during the current CPS write session. Reset at session start; see
+    /// `write_channel` for why per-sector (not per-record) tracking is
+    /// enough.
+    channel_erased_mask: u8,
 }
 
 impl Storage {
     pub fn new(norflash: NorFlash<'static>) -> Self {
-        Self { norflash }
+        Self {
+            norflash,
+            channel_erased_mask: 0,
+        }
     }
 
     // settings
@@ -134,6 +142,33 @@ impl Storage {
         let mut buf = [0u8; addr::CHAN_SIZE as usize];
         self.norflash.read_bytes(addr, &mut buf);
         flash_map::Channel::from_bytes(&buf)
+    }
+
+    pub fn is_channel_empty(&mut self, num: u16) -> bool {
+        let addr = addr::CHAN_ADDR + num as u32 * addr::CHAN_SIZE;
+        let mut buf = [0u8; addr::CHAN_SIZE as usize];
+        self.norflash.read_bytes(addr, &mut buf);
+        buf.iter().all(|&b| b == 0xFF)
+    }
+
+    /// Call once at the start of a CPS write session, before any
+    /// `write_channel` calls, so each touched sector gets erased exactly
+    /// once for the session.
+    pub fn reset_channel_write_session(&mut self) {
+        self.channel_erased_mask = 0;
+    }
+
+    pub fn write_channel(&mut self, num: u16, channel: &flash_map::Channel) {
+        let addr = addr::CHAN_ADDR + num as u32 * addr::CHAN_SIZE;
+        let sector = addr / SECTOR_SIZE;
+        let bit = 1u8 << sector;
+
+        if self.channel_erased_mask & bit == 0 {
+            self.norflash.erase_sector(sector * SECTOR_SIZE);
+            self.channel_erased_mask |= bit;
+        }
+
+        self.norflash.write_bytes(addr, &channel.to_bytes());
     }
 
     // factory reset

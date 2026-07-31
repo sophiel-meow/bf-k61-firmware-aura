@@ -354,6 +354,9 @@ pub struct Settings {
     /// timeout), 1..4 = 5/10/15/20 seconds of idle before the backlight
     /// turns off. Forced back on regardless of this while transmitting.
     pub backlight_time: u8,
+    /// Standby-screen channel readout, 0-2: 0 = frequency only, 1 = channel
+    /// name only, 2 = name and freq.
+    pub channel_display_mode: u8,
 }
 
 impl Settings {
@@ -376,9 +379,10 @@ impl Settings {
         rit_offset: 0,
         save_level: 0,
         backlight_time: 2,
+        channel_display_mode: 2,
     };
 
-    pub fn from_bytes(buf: &[u8; 18]) -> Settings {
+    pub fn from_bytes(buf: &[u8; 19]) -> Settings {
         Settings {
             sql_level: buf[0],
             tail_elimination: buf[1] != 0,
@@ -398,10 +402,11 @@ impl Settings {
             rit_offset: (buf[15] as i8).clamp(-127, 127),
             save_level: buf[16].min(4),
             backlight_time: buf[17].min(4),
+            channel_display_mode: buf[18].min(2),
         }
     }
 
-    pub fn to_bytes(&self) -> [u8; 18] {
+    pub fn to_bytes(&self) -> [u8; 19] {
         [
             self.sql_level,
             self.tail_elimination as u8,
@@ -421,6 +426,7 @@ impl Settings {
             self.rit_offset as u8,
             self.save_level,
             self.backlight_time,
+            self.channel_display_mode,
         ]
     }
 

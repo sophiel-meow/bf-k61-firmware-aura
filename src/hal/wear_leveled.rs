@@ -1,6 +1,6 @@
 use crate::drivers::norflash::{NorFlash, SECTOR_SIZE};
 
-fn crc16_xmodem(data: &[u8]) -> u16 {
+pub(crate) fn crc16_xmodem(data: &[u8]) -> u16 {
     let mut crc: u16 = 0;
     for &byte in data {
         crc ^= (byte as u16) << 8;

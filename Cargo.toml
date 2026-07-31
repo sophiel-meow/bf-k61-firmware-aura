@@ -10,9 +10,9 @@ bench = false
 
 [dependencies]
 cortex-m = "0.7"
-cortex-m-rt = "0.7"
+cortex-m-rt = { version = "0.7", features = ["device"] }
 panic-halt = "0.2"
-kd32f328-pac = { path = "../kd32f328-pac" }
+kd32f328-pac = { path = "../kd32f328-pac", features = ["rt"] }
 embedded-hal = "1.0"
 embedded-hal-bus = "0.3"
 display-interface = "0.5"

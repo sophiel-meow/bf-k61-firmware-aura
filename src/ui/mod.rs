@@ -1,3 +1,4 @@
+pub mod cps;
 mod fm;
 pub mod icons;
 mod launcher;

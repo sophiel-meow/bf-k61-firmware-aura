@@ -16,6 +16,13 @@ pub(super) struct Side {
     /// Raw 12-byte channel name (only meaningful when `vfo_chan ==
     /// Channel`); `[0; 12]` in VFO mode or for an unnamed channel.
     pub name: [u8; 12],
+    /// Snapshot of `(rx_freq_hz, freq_dir, offset_hz)` taken the moment
+    /// this side leaves VFO mode, since Channel mode reuses those same
+    /// fields: without this, switching back to VFO mode has nothing left
+    /// to restore and keeps showing the channel's frequency. Restored
+    /// verbatim on the way back to `Vfo`; only ever written on the way out
+    /// of it (see `App::toggle_vfo_channel`).
+    pub vfo_backup: (u32, u8, u32),
 }
 
 impl Side {
@@ -46,6 +53,7 @@ impl Side {
         self.rx_freq_hz = vfo.freq_deci_hz() * 10;
         self.freq_dir = vfo.freq_dir();
         self.offset_hz = vfo.offset_deci_hz() * 10;
+        self.vfo_backup = (self.rx_freq_hz, self.freq_dir, self.offset_hz);
         self.cfg.wide_band = !vfo.wide_narrow();
         self.cfg.power = power_from_raw(vfo.tx_power);
         self.cfg.subaudio_tx = subaudio_from_code(vfo.tx_dcs_cts_num);

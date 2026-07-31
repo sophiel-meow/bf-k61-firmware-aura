@@ -20,6 +20,7 @@ const FIRMWARE_VERSION: &str = env!("CARGO_PKG_VERSION");
 const STEP_LIST_DECI_HZ: [u32; 9] = [250, 500, 625, 1000, 1250, 2000, 2500, 5000, 10000];
 const DEFAULT_STEP_INDEX: u8 = 3;
 
+/// Highest valid channel index. `0..=999`, 1000 total slots
 const MAX_CHANNEL_NUM: u16 = 999;
 
 const VFO_INPUT_DIGITS: usize = 6;
@@ -82,6 +83,14 @@ pub enum ChannelDisplayMode {
     Frequency,
     Name,
     NameFreq,
+}
+
+fn channel_display_mode_from_u8(v: u8) -> ChannelDisplayMode {
+    match v {
+        1 => ChannelDisplayMode::Name,
+        2 => ChannelDisplayMode::NameFreq,
+        _ => ChannelDisplayMode::Frequency,
+    }
 }
 
 fn channel_name_str(raw: &[u8; 12]) -> &str {
@@ -353,7 +362,7 @@ impl App {
         let mut sides = [
             side::Side {
                 vfo_chan: ChVfoMode::Vfo,
-                channel_num: 1,
+                channel_num: 0,
                 freq_step: DEFAULT_STEP_INDEX,
                 rx_freq_hz: default_cfg.freq_hz,
                 tx_freq_hz: default_cfg.tx_freq_hz,
@@ -362,10 +371,11 @@ impl App {
                 reversed: false,
                 cfg: default_cfg,
                 name: [0; 12],
+                vfo_backup: (default_cfg.freq_hz, 0, 0),
             },
             side::Side {
                 vfo_chan: ChVfoMode::Vfo,
-                channel_num: 1,
+                channel_num: 0,
                 freq_step: DEFAULT_STEP_INDEX,
                 rx_freq_hz: default_cfg.freq_hz,
                 tx_freq_hz: default_cfg.tx_freq_hz,
@@ -374,6 +384,7 @@ impl App {
                 reversed: false,
                 cfg: default_cfg,
                 name: [0; 12],
+                vfo_backup: (default_cfg.freq_hz, 0, 0),
             },
         ];
 
@@ -433,7 +444,7 @@ impl App {
             battery_bars: 4,
             rssi_raw: 0,
             mic_level: 0,
-            channel_display_mode: ChannelDisplayMode::Frequency,
+            channel_display_mode: channel_display_mode_from_u8(settings.channel_display_mode),
             power_save: false,
             ps_asleep: false,
             ps_idle_ticks: POWER_SAVE_IDLE_TICKS,
@@ -617,28 +628,41 @@ impl App {
                 self.save_vfo();
             }
             ChVfoMode::Channel => {
-                let next = if up {
-                    if s.channel_num >= MAX_CHANNEL_NUM {
-                        1
-                    } else {
-                        s.channel_num + 1
-                    }
-                } else if s.channel_num <= 1 {
-                    MAX_CHANNEL_NUM
-                } else {
-                    s.channel_num - 1
-                };
-                self.load_channel_num(next);
+                let current = s.channel_num;
+                if let Some(next) = self.find_programmed_channel(current, up) {
+                    self.load_channel_num(next);
+                }
             }
         }
         self.sync_watching_to_master(syst);
+    }
+
+    fn find_programmed_channel(&mut self, from: u16, up: bool) -> Option<u16> {
+        let mut num = from;
+        for _ in 0..=MAX_CHANNEL_NUM {
+            num = if up {
+                if num >= MAX_CHANNEL_NUM {
+                    0
+                } else {
+                    num + 1
+                }
+            } else if num == 0 {
+                MAX_CHANNEL_NUM
+            } else {
+                num - 1
+            };
+            if !self.storage.is_channel_empty(num) {
+                return Some(num);
+            }
+        }
+        None
     }
 
     fn commit_input(&mut self, syst: &mut SYST) {
         let value = self.input.value();
         match self.sides[self.master].vfo_chan {
             ChVfoMode::Channel => {
-                if value >= 1 && value <= MAX_CHANNEL_NUM as u32 {
+                if value <= MAX_CHANNEL_NUM as u32 && !self.storage.is_channel_empty(value as u16) {
                     self.load_channel_num(value as u16);
                     self.sync_watching_to_master(syst);
                 }
@@ -658,10 +682,36 @@ impl App {
 
     fn toggle_vfo_channel(&mut self, syst: &mut SYST) {
         let s = &mut self.sides[self.master];
-        s.vfo_chan = match s.vfo_chan {
-            ChVfoMode::Vfo => ChVfoMode::Channel,
-            ChVfoMode::Channel => ChVfoMode::Vfo,
-        };
+        match s.vfo_chan {
+            ChVfoMode::Vfo => {
+                // Channel mode reuses rx_freq_hz/freq_dir/offset_hz, so
+                // stash the VFO's own values before they get overwritten.
+                s.vfo_backup = (s.rx_freq_hz, s.freq_dir, s.offset_hz);
+                let num = s.channel_num;
+                // The last-selected channel number may not actually be
+                // programmed, land on the nearest real one instead of showing
+                // garbage decoded from erased flash.
+                // If nothing is programmed at all, stay put rather than
+                // switching into a channel that doesn't exist.
+                let num = if self.storage.is_channel_empty(num) {
+                    self.find_programmed_channel(num, true)
+                } else {
+                    Some(num)
+                };
+                if let Some(num) = num {
+                    self.load_channel_num(num);
+                }
+            }
+            ChVfoMode::Channel => {
+                let (rx_freq_hz, freq_dir, offset_hz) = s.vfo_backup;
+                s.vfo_chan = ChVfoMode::Vfo;
+                s.rx_freq_hz = rx_freq_hz;
+                s.freq_dir = freq_dir;
+                s.offset_hz = offset_hz;
+                s.refresh_cfg_freqs();
+            }
+        }
+
         self.input.clear();
         self.sync_watching_to_master(syst);
     }
@@ -1027,6 +1077,9 @@ impl App {
     }
     pub fn radio_mut(&mut self) -> &mut Radio {
         &mut self.radio
+    }
+    pub fn storage_mut(&mut self) -> &mut Storage {
+        &mut self.storage
     }
     pub fn poll_squelch(&mut self, syst: &mut SYST, db: u8) {
         self.radio.poll_squelch(syst, db);

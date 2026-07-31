@@ -3,6 +3,7 @@
 
 mod app;
 mod board;
+mod cps;
 mod device;
 mod drivers;
 mod flash_map;
@@ -68,9 +69,12 @@ fn main() -> ! {
     board::init_rx_led_pin(gpioa);
 
     let mut dbg = uart::DebugUart::new(usart1, clock::SYSCLK_HZ, 115_200);
+    uart::install_bootloader_trampoline();
+    unsafe { cortex_m::peripheral::NVIC::unmask(kd32f328_pac::Interrupt::USART1) };
     writeln!(dbg, "bfk6-fw boot, sysclk={}Hz", clock::SYSCLK_HZ).ok();
 
     let mut cp = cortex_m::Peripherals::take().unwrap();
+    unsafe { cp.NVIC.set_priority(kd32f328_pac::Interrupt::USART1, 0) };
 
     // display
     let spi_bus = spi::SpiBus::new(spi2, spi::ClockMode::Mode3, 8);
@@ -185,13 +189,20 @@ fn main() -> ! {
     )
     .ok();
 
+    unsafe { cortex_m::interrupt::enable() };
+
     // scheduler + main loop
     let mut scheduler = scheduler::Scheduler::new();
     let mut applied_contrast: u8 = u8::MAX;
     let mut backlight_on = true;
+    let mut cps_handshake = cps::HandshakeDetector::new();
 
     loop {
         let due = scheduler.tick();
+
+        if cps_handshake.poll() {
+            cps::run_session(&mut app, &mut cp.SYST, &mut display, &mut dbg);
+        }
 
         app.poll_keys(&mut cp.SYST);
 
