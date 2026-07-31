@@ -343,10 +343,9 @@ pub struct Settings {
     pub tot_level: u8,
     /// `beepsSwitch`: audible tone on keypress.
     pub beeps_switch: bool,
-    /// `txOffTone == 1`: two-tone "roger beep" transmitted right after PTT
-    /// release. (
-    /// TODO: `txOffTone == 2`, MDC1200 signaling, isn't implemented.
-    pub roger_beep: bool,
+    /// `txOffTone`: what plays right after PTT release, before the tail
+    /// elimination tone (if any). 0 = off, 1 = roger beep, 2 = MDC1200 burst.
+    pub roger_tone: u8,
     /// `scarmble`: voice-inversion scramble group, 0 (off) - 3.
     pub scramble_level: u8,
     /// LCD electronic-volume level, 0-4
@@ -397,7 +396,7 @@ impl Settings {
         vox_level: 1,
         tot_level: 8,
         beeps_switch: true,
-        roger_beep: false,
+        roger_tone: 0,
         scramble_level: 0,
         contrast: 2,
         rtone: 2,
@@ -426,7 +425,7 @@ impl Settings {
             vox_level: buf[7].clamp(1, 9),
             tot_level: buf[8],
             beeps_switch: buf[9] != 0,
-            roger_beep: buf[10] != 0,
+            roger_tone: buf[10].min(2),
             scramble_level: buf[11],
             contrast: buf[12].min(4),
             rtone: buf[13].min(3),
@@ -456,7 +455,7 @@ impl Settings {
             self.vox_level,
             self.tot_level,
             self.beeps_switch as u8,
-            self.roger_beep as u8,
+            self.roger_tone,
             self.scramble_level,
             self.contrast,
             self.rtone,

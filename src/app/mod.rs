@@ -13,7 +13,7 @@ mod side;
 use crate::device::flashlight::Flashlight;
 use crate::device::fm_radio::FmRadio;
 use crate::device::keypad::{KeyEvent, KeyEventKind, KeyId, Keypad};
-use crate::device::radio::{ChannelConfig, Modulation, Power, Radio, SubAudio};
+use crate::device::radio::{ChannelConfig, Modulation, Power, Radio, RogerTone, SubAudio};
 use crate::device::storage::Storage;
 use crate::flash_map::{self, addr};
 use cortex_m::peripheral::SYST;
@@ -482,7 +482,7 @@ impl App {
         radio.set_sql_level(syst, settings.sql_level);
         radio.set_tail_elimination(settings.tail_elimination);
         radio.set_beeps_enabled(settings.beeps_switch);
-        radio.set_roger_beep(settings.roger_beep);
+        radio.set_roger_tone(RogerTone::from_u8(settings.roger_tone));
         radio.set_scramble_level(syst, settings.scramble_level);
         radio.set_rit_offset(settings.rit_offset as i32 * 10);
 
@@ -535,9 +535,15 @@ impl App {
     }
 
     // dual standby
-    pub fn set_dual_standby(&mut self, enabled: bool) {
+    pub fn set_dual_standby(&mut self, syst: &mut SYST, enabled: bool) {
         self.dual_standby = enabled;
         self.dual_hold_ticks = DUAL_STANDBY_HOLD_TICKS;
+
+        // force radio to watch current master side
+        if !enabled && self.watching != self.master {
+            self.watching = self.master;
+            self.apply_watching_to_radio(syst);
+        }
     }
 
     pub fn poll_dual_standby(&mut self, syst: &mut SYST, signal_present: bool) {

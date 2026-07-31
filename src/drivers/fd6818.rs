@@ -254,6 +254,22 @@ const FSK_CONTROL_TX_EN: u16 = 0x0800;
 /// Raw FSK word count per frame (8 x 16-bit words = 16 bytes).
 const FSK_FRAME_LEN: usize = 8;
 
+/// MDC1200 roger tone
+const MDC_PREAMBLE: u16 = 0x37C3;
+const MDC_GAIN: u16 = 0x00B4;
+/// REG 0x3F value while armed to receive the MDC1200 TX-complete ack.
+const WORK_MODE_MDC_ARM: u16 = 0x3000;
+const MDC_LEN: usize = 14;
+/// `(MDC_LEN * 2 - 1) << 8`
+const MDC_FRAME_LEN_FIELD: u16 = 0x1B00;
+const REG_MDC_SYNC_HI: u8 = 0x5A;
+const REG_MDC_SYNC_MID: u8 = 0x5B;
+const MDC_SYNC: [u8; 5] = [0xFB, 0x72, 0x40, 0x99, 0xA7];
+const MDC_TXDATA: [u16; MDC_LEN] = [
+    0xB604, 0x37D9, 0x8388, 0xE28E, 0x66EC, 0xAEE4, 0xC3DB, 0x158F, 0x19A7, 0x499F, 0x82D4, 0xFAE5,
+    0x1A96, 0xC9C0,
+];
+
 const REG_AF_TX_3K: u8 = 0x74;
 const REG_AF_TX_300_D1: u8 = 0x44;
 const REG_AF_TX_300_D2: u8 = 0x45;
@@ -738,6 +754,60 @@ impl<'a> Fd6818<'a> {
         }
         self.write_reg(syst, REG_INT_CLEAR, 0x0000);
         data
+    }
+
+    pub fn enter_mdc1200_mode(&mut self, syst: &mut SYST) {
+        self.write_reg(syst, REG_FSK_PREAMBLE, MDC_PREAMBLE);
+        self.write_reg(syst, REG_FSK_BAUD, FSK_BAUD_1200);
+        self.write_reg(syst, REG_TONE_GAIN, MDC_GAIN);
+        self.write_reg(syst, REG_FSK_5D, MDC_FRAME_LEN_FIELD);
+        self.write_reg(
+            syst,
+            REG_FSK_CONTROL,
+            FSK_CONTROL_BASE | FSK_CONTROL_RX_FIFO_CLEAR,
+        );
+        self.write_reg(syst, REG_FSK_CONTROL, FSK_CONTROL_BASE | FSK_CONTROL_RX_EN);
+        self.write_reg(syst, REG_WORK_MODE, WORK_MODE_MDC_ARM);
+    }
+
+    pub fn exit_mdc1200_mode(&mut self, syst: &mut SYST) {
+        self.write_reg(syst, REG_TONE_GAIN, 0x0000);
+        self.write_reg(syst, REG_FSK_PREAMBLE, 0x0000);
+    }
+
+    /// Sends the fixed MDC1200 end-of-transmission burst and blocks until
+    /// the chip reports it sent (or ~1s elapses without an ack).
+    pub fn mdc1200_tone_tx(&mut self, syst: &mut SYST) {
+        self.write_reg(syst, REG_WORK_MODE, WORK_MODE_FSK_TX_IRQ);
+        self.write_reg(
+            syst,
+            REG_FSK_CONTROL,
+            FSK_CONTROL_BASE | FSK_CONTROL_TX_FIFO_CLEAR,
+        );
+        self.write_reg(syst, REG_FSK_CONTROL, FSK_CONTROL_BASE);
+
+        let sync_hi = (MDC_SYNC[0] as u16) << 8 | MDC_SYNC[1] as u16;
+        let sync_mid = (MDC_SYNC[2] as u16) << 8 | MDC_SYNC[3] as u16;
+        let sync_lo = (MDC_SYNC[4] as u16) << 8 | 0x30;
+        self.write_reg(syst, REG_MDC_SYNC_HI, sync_hi);
+        self.write_reg(syst, REG_MDC_SYNC_MID, sync_mid);
+        self.write_reg(syst, REG_FSK_5C, sync_lo);
+
+        for &word in MDC_TXDATA.iter() {
+            self.write_reg(syst, REG_FSK_FIFO, word);
+        }
+        delay::ms(syst, 20);
+
+        self.write_reg(syst, REG_FSK_CONTROL, FSK_CONTROL_BASE | FSK_CONTROL_TX_EN);
+        for _ in 0..200 {
+            delay::ms(syst, 5);
+            if self.read_reg(syst, REG_STATUS) & 0x0001 != 0 {
+                break;
+            }
+        }
+        self.write_reg(syst, REG_INT_CLEAR, 0x0000);
+        self.write_reg(syst, REG_WORK_MODE, 0x0000);
+        self.write_reg(syst, REG_FSK_CONTROL, FSK_CONTROL_BASE);
     }
 
     /// Selects what REG 0x47 routes to the audio-out pin and switches

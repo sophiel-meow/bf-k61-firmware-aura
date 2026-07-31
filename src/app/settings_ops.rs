@@ -4,7 +4,7 @@ use super::{
     channel_display_mode_from_u8, clamp_step, subaudio_from_index, subaudio_index, wrap_step, App,
     ChVfoMode, Mode, FIRMWARE_VERSION, RTONE_HZ_DIV_10, STEP_LIST_DECI_HZ, SUBAUDIO_MAX_INDEX,
 };
-use crate::device::radio::{Power, SubAudio};
+use crate::device::radio::{Power, RogerTone, SubAudio};
 use crate::flash_map;
 use core::fmt::Write;
 use cortex_m::peripheral::{SCB, SYST};
@@ -39,7 +39,7 @@ pub(super) fn current_value(app: &App, item: SettingItem) -> i32 {
         SettingItem::BusyLock => app.settings.busy_lock as i32,
         SettingItem::TxForbid => app.settings.tx_forbid as i32,
         SettingItem::Beep => app.settings.beeps_switch as i32,
-        SettingItem::Roge => app.settings.roger_beep as i32,
+        SettingItem::Roge => app.settings.roger_tone as i32,
         SettingItem::Wn => !side.cfg.wide_band as i32,
         SettingItem::TxPr => matches!(side.cfg.power, Power::Low) as i32,
         SettingItem::RxCts => subaudio_index(side.cfg.subaudio_rx),
@@ -80,9 +80,9 @@ pub(super) fn adjust(app: &mut App, syst: &mut SYST, item: SettingItem, up: bool
         | SettingItem::BusyLock
         | SettingItem::TxForbid
         | SettingItem::Beep
-        | SettingItem::Roge
         | SettingItem::Wn
         | SettingItem::TxPr => 1 - cur,
+        SettingItem::Roge => clamp_step(cur, up, 0, 2),
         SettingItem::RxCts | SettingItem::TxCts => wrap_step(cur, up, -1, SUBAUDIO_MAX_INDEX),
         SettingItem::Scrm => clamp_step(cur, up, 0, 3),
         SettingItem::AutoLk => clamp_step(cur, up, 0, 3),
@@ -116,7 +116,7 @@ pub(super) fn apply(app: &mut App, syst: &mut SYST, item: SettingItem, v: i32) {
         SettingItem::Tot => app.settings.tot_level = v as u8,
         SettingItem::Tdr => {
             app.settings.dual_standby = v != 0;
-            app.set_dual_standby(v != 0);
+            app.set_dual_standby(syst, v != 0);
         }
         SettingItem::BusyLock => app.settings.busy_lock = v != 0,
         SettingItem::TxForbid => app.settings.tx_forbid = v != 0,
@@ -125,8 +125,8 @@ pub(super) fn apply(app: &mut App, syst: &mut SYST, item: SettingItem, v: i32) {
             app.radio.set_beeps_enabled(v != 0);
         }
         SettingItem::Roge => {
-            app.settings.roger_beep = v != 0;
-            app.radio.set_roger_beep(v != 0);
+            app.settings.roger_tone = v as u8;
+            app.radio.set_roger_tone(RogerTone::from_u8(v as u8));
         }
         SettingItem::Wn => {
             app.sides[app.master].cfg.wide_band = v == 0;
@@ -225,11 +225,7 @@ pub fn value_text_for(app: &App, index: usize, item: SettingItem, w: &mut dyn Wr
             let deci_hz = STEP_LIST_DECI_HZ[current_value(app, item) as usize];
             let _ = write!(w, "{}.{:02}k", deci_hz / 100, deci_hz % 100);
         }
-        SettingItem::Tdr
-        | SettingItem::BusyLock
-        | SettingItem::TxForbid
-        | SettingItem::Beep
-        | SettingItem::Roge => {
+        SettingItem::Tdr | SettingItem::BusyLock | SettingItem::TxForbid | SettingItem::Beep => {
             let _ = write!(
                 w,
                 "{}",
@@ -237,6 +233,17 @@ pub fn value_text_for(app: &App, index: usize, item: SettingItem, w: &mut dyn Wr
                     "ON"
                 } else {
                     "OFF"
+                }
+            );
+        }
+        SettingItem::Roge => {
+            let _ = write!(
+                w,
+                "{}",
+                match current_value(app, item) {
+                    1 => "ROGER",
+                    2 => "MDC1200",
+                    _ => "OFF",
                 }
             );
         }

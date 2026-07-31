@@ -15,6 +15,27 @@ const BEEP_TONES: [(u16, u32); 2] = [(150, 80), (45, 35)];
 /// Roger-beep tone pair: 1000Hz then 850Hz, 80ms each
 const ROGER_TONES: [(u16, u32); 2] = [(100, 80), (85, 80)];
 
+/// `txOffTone`: what plays right after PTT release, before the tail
+/// elimination tone (if any) and the return to RX.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RogerTone {
+    Off,
+    /// roger beep
+    Roger,
+    /// MDC1200 burst
+    Mdc1200,
+}
+
+impl RogerTone {
+    pub fn from_u8(v: u8) -> RogerTone {
+        match v {
+            1 => RogerTone::Roger,
+            2 => RogerTone::Mdc1200,
+            _ => RogerTone::Off,
+        }
+    }
+}
+
 /// ADC channel for VOX mic level (PA0 = ADC1 ch0).
 pub const VOX_ADC_CHANNEL: u8 = 0;
 /// ADC channel for battery voltage (PA1 = ADC1 ch1).
@@ -162,7 +183,7 @@ pub struct Radio {
     sql_level: u8,
     tail_elimination: bool,
     beeps_enabled: bool,
-    roger_beep: bool,
+    roger_tone: RogerTone,
     scramble_level: u8,
 
     rit_offset_hz: i32,
@@ -203,7 +224,7 @@ impl Radio {
             sql_level: 3,
             tail_elimination: true,
             beeps_enabled: true,
-            roger_beep: false,
+            roger_tone: RogerTone::Off,
             scramble_level: 0,
             rit_offset_hz: 0,
             audio_open: false,
@@ -334,8 +355,8 @@ impl Radio {
         self.beeps_enabled = enabled;
     }
 
-    pub fn set_roger_beep(&mut self, enabled: bool) {
-        self.roger_beep = enabled;
+    pub fn set_roger_tone(&mut self, tone: RogerTone) {
+        self.roger_tone = tone;
     }
 
     pub fn set_scramble_level(&mut self, syst: &mut SYST, level: u8) {
@@ -432,6 +453,12 @@ impl Radio {
 
     fn play_roger_tone(&mut self, syst: &mut SYST) {
         self.play_tone_sequence(syst, &ROGER_TONES, true);
+    }
+
+    fn play_mdc1200_tone(&mut self, syst: &mut SYST) {
+        self.fd6818.enter_mdc1200_mode(syst);
+        self.fd6818.mdc1200_tone_tx(syst);
+        self.fd6818.exit_mdc1200_mode(syst);
     }
 
     fn play_tone_sequence(&mut self, syst: &mut SYST, tones: &[(u16, u32)], key_tx: bool) {
@@ -604,8 +631,10 @@ impl Radio {
     }
 
     pub fn end_tx(&mut self, syst: &mut SYST) {
-        if self.roger_beep {
-            self.play_roger_tone(syst);
+        match self.roger_tone {
+            RogerTone::Off => {}
+            RogerTone::Roger => self.play_roger_tone(syst),
+            RogerTone::Mdc1200 => self.play_mdc1200_tone(syst),
         }
         if self.tail_elimination {
             self.fd6818.send_tail(syst, true);
