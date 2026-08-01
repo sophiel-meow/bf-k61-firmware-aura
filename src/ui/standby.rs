@@ -199,7 +199,7 @@ where
             ChannelDisplayMode::NameFreq if has_name => {
                 let shown = &name[..name.len().min(12)];
                 let name_y = top + FONT_6X10.baseline as i32;
-                draw_right_aligned(lcd, shown, &FONT_6X10, name_y);
+                draw_right_aligned_bold(lcd, shown, &FONT_6X10, name_y);
 
                 let mhz = freq_hz / 1_000_000;
                 let frac = (freq_hz % 1_000_000) / 10;
@@ -254,6 +254,32 @@ pub(super) fn draw_right_aligned<D>(
     )
     .draw(lcd)
     .ok();
+}
+
+/// Faux-bold
+#[allow(dead_code)]
+fn draw_bold<D>(lcd: &mut D, text: &str, pos: Point, font: &embedded_graphics::mono_font::MonoFont)
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    let style = MonoTextStyle::new(font, BinaryColor::On);
+    Text::new(text, pos, style).draw(lcd).ok();
+    Text::new(text, pos + Point::new(1, 0), style)
+        .draw(lcd)
+        .ok();
+}
+
+fn draw_right_aligned_bold<D>(
+    lcd: &mut D,
+    text: &str,
+    font: &embedded_graphics::mono_font::MonoFont,
+    y: i32,
+) where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    let width = text.chars().count() as i32 * font.character_size.width as i32;
+    let x = 128 - RIGHT_MARGIN - width;
+    draw_bold(lcd, text, Point::new(x, y), font);
 }
 
 /// Big MHz.kHz frequency (ProFont) with the remaining 2 fractional digits
