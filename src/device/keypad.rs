@@ -221,4 +221,8 @@ impl Keypad {
     pub fn pop_event(&mut self) -> Option<KeyEvent> {
         self.queue.pop()
     }
+
+    pub fn any_pressed(&mut self, syst: &mut SYST) -> bool {
+        self.scan(syst).is_some()
+    }
 }

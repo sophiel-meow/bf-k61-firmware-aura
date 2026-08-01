@@ -81,8 +81,13 @@ pub fn run_session<DI: WriteOnlyDataCommand>(
         };
         idle_ms = 0;
 
-        let Some(frame) = reader.feed(byte) else {
-            continue;
+        let frame = match reader.feed(byte) {
+            frame::FeedResult::Pending => continue,
+            frame::FeedResult::CrcError { addr } => {
+                send_error(dbg, addr, frame::ERR_BAD_CRC);
+                continue;
+            }
+            frame::FeedResult::Frame(frame) => frame,
         };
 
         match frame.cmd {

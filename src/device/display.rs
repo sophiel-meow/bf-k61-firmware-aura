@@ -29,12 +29,6 @@ impl<'a, DI: WriteOnlyDataCommand> Display<'a, DI> {
         }
     }
 
-    pub fn set_display_on(&mut self, on: bool) {
-        if let Some(ref mut lcd) = self.lcd {
-            lcd.set_display_on(on).ok();
-        }
-    }
-
     /// Apply a contrast level (0-4). The st7565 crate keeps its command
     /// interface private, so we detach the SPI interface, push the two
     /// command bytes raw, and attach it back.

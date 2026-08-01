@@ -729,6 +729,9 @@ impl Radio {
             if self.rssi_debounce >= debounce_ticks {
                 self.rssi_open = rssi_open;
                 self.rssi_debounce = 0;
+                if rssi_open {
+                    board::set_rx_led(self.gpioa, true);
+                }
             }
         } else {
             self.rssi_debounce = 0;

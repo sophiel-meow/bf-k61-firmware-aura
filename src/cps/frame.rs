@@ -30,6 +30,15 @@ pub struct Frame {
     pub len: usize,
 }
 
+pub enum FeedResult {
+    /// Frame not yet complete; keep feeding bytes.
+    Pending,
+    /// A complete, CRC-valid frame.
+    Frame(Frame),
+    /// A frame completed but its CRC didn't match.
+    CrcError { addr: u16 },
+}
+
 enum State {
     Header,
     Cmd,
@@ -70,11 +79,11 @@ impl FrameReader {
         self.state = State::Header;
     }
 
-    /// Feed one received byte. Returns `Some(Frame)` once a
-    /// CRC-valid frame is complete; malformed/oversized/CRC-mismatched
-    /// frames are silently dropped and the reader resyncs on the next
-    /// header byte.
-    pub fn feed(&mut self, byte: u8) -> Option<Frame> {
+    /// Feed one received byte. Returns `Frame` once a CRC-valid frame is
+    /// complete, `CrcError` if a frame completed but failed its CRC check,
+    /// or `Pending` otherwise. Oversized frames are silently dropped and
+    /// the reader resyncs on the next header byte.
+    pub fn feed(&mut self, byte: u8) -> FeedResult {
         match self.state {
             State::Header => {
                 if byte == HEADER {
@@ -122,20 +131,22 @@ impl FrameReader {
             }
             State::CrcLo => {
                 let crc_rx = ((self.crc_hi as u16) << 8) | byte as u16;
+                let addr = self.addr;
                 self.reset();
 
-                let crc_calc = frame_crc(self.cmd, self.addr, &self.data[..self.len]);
+                let crc_calc = frame_crc(self.cmd, addr, &self.data[..self.len]);
                 if crc_rx == crc_calc {
-                    return Some(Frame {
+                    return FeedResult::Frame(Frame {
                         cmd: self.cmd,
-                        addr: self.addr,
+                        addr,
                         data: self.data,
                         len: self.len,
                     });
                 }
+                return FeedResult::CrcError { addr };
             }
         }
-        None
+        FeedResult::Pending
     }
 }
 

@@ -18,11 +18,6 @@ impl Power {
         board::set_power_latch(self.gpioa, true);
     }
 
-    /// Returns `true` when the physical power switch reads as OFF.
-    pub fn switch_off(&self) -> bool {
-        board::power_switch_off(self.gpioa)
-    }
-
     /// Debounced power-off check. Call in the main loop; when it returns
     /// `true` the user held the switch long enough to confirm shutdown.
     pub fn debounced_off(&self, syst: &mut SYST) -> bool {

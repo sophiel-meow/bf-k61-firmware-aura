@@ -217,6 +217,7 @@ fn dispatch_app_menu(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
                         LauncherEntry::FmRadio => fm::enter(app, syst),
                         LauncherEntry::Search => search::enter(app, syst),
                     }
+                    debug_assert!(app.mode == entry.target_mode());
                 }
             }
             KeyId::Exit if ev.kind == KeyEventKind::Single => {

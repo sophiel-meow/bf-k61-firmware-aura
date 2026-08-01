@@ -108,6 +108,7 @@ impl<'a> NorFlash<'a> {
         self.wait_until_ready();
     }
 
+    #[allow(dead_code)]
     pub fn erase_chip(&mut self) {
         self.write_enable();
         self.cs_low();

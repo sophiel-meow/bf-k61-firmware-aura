@@ -43,12 +43,6 @@ pub fn vfo_not_default() -> ImageRaw<'static, BinaryColor> {
     ImageRaw::new(&VFO_NOT_DEFAULT_DATA, VFO_NOT_DEFAULT_WIDTH)
 }
 
-pub const VFO_LOCK_WIDTH: u32 = 7;
-const VFO_LOCK_DATA: [u8; 8] = [0x38, 0x44, 0xfe, 0x82, 0x82, 0x82, 0xfe, 0x00];
-pub fn vfo_lock() -> ImageRaw<'static, BinaryColor> {
-    ImageRaw::new(&VFO_LOCK_DATA, VFO_LOCK_WIDTH)
-}
-
 pub const KEY_LOCK_WIDTH: u32 = 9;
 const KEY_LOCK_DATA: [u8; 16] = [
     0x3e, 0x00, 0x41, 0x00, 0xff, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0xff, 0x80, 0x00, 0x00,

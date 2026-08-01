@@ -127,13 +127,6 @@ impl SubaudioCode {
             SubaudioCode::None
         }
     }
-
-    pub fn raw(self) -> u16 {
-        match self {
-            SubaudioCode::None => 0,
-            SubaudioCode::DcsNormal(c) | SubaudioCode::DcsInverted(c) | SubaudioCode::Ctcss(c) => c,
-        }
-    }
 }
 
 /// On-flash channel record: `STR_CHANNEL` (20 bytes) followed by the
@@ -213,6 +206,7 @@ impl Channel {
     }
 
     /// `chFlag3.Bit.spMute`, bits 4-5: 0=QT 1=DTMF 2=QT+DTMF 3=QT*DTMF.
+    #[allow(dead_code)]
     pub fn sp_mute(&self) -> u8 {
         (self.flags >> 4) & 0x03
     }

@@ -40,6 +40,8 @@ const ANI_DISPLAY_HOLD_TICKS: u16 = 500;
 
 const NO_CHANNELS_HOLD_TICKS: u16 = 200;
 
+const RX_BLINK_HALF_PERIOD: u16 = 5;
+
 const DTMF_DIAL_MAX_DIGITS: usize = 16;
 
 const POWER_SAVE_IDLE_TICKS: u16 = 1000;
@@ -434,6 +436,7 @@ pub struct App {
 
     /// toggle finds nothing programmed. 0 = not showing.
     no_channels_ticks: u16,
+    blink_phase: u16,
     /// Runtime "current call target" override:
     /// sticky across PTTs, set by picking a contact in the Contacts app or
     /// by a 3-digit manual DTMF dial, cleared whenever the active channel
@@ -612,6 +615,7 @@ impl App {
             ani_caller: None,
             ani_hold_ticks: 0,
             no_channels_ticks: 0,
+            blink_phase: 0,
             ani_target_override: None,
             dtmf_dial: None,
             battery_cal,
@@ -1163,6 +1167,14 @@ impl App {
         self.no_channels_ticks > 0
     }
 
+    pub fn poll_blink(&mut self) {
+        self.blink_phase = self.blink_phase.wrapping_add(1);
+    }
+
+    pub fn rx_blink_on(&self) -> bool {
+        (self.blink_phase / RX_BLINK_HALF_PERIOD).is_multiple_of(2)
+    }
+
     // key dispatch
     pub fn poll_keys(&mut self, syst: &mut SYST) {
         self.keypad.poll(syst);
@@ -1532,6 +1544,9 @@ impl App {
     }
     pub fn audio_open(&self) -> bool {
         self.radio.audio_is_open()
+    }
+    pub fn is_monitor(&self) -> bool {
+        self.radio.is_monitor()
     }
     pub fn dual_standby_enabled(&self) -> bool {
         self.dual_standby

@@ -163,10 +163,27 @@ fn main() -> ! {
     // FM broadcast chip (RDA5807)
     let fm_radio = FmRadio::new(gpioa);
 
+    let mut keypad = Keypad::new(gpiob, gpioc, gpiof);
+
+    if radio.ptt_asserted() || keypad.any_pressed(&mut cp.SYST) {
+        writeln!(dbg, "PTT/key held at boot, waiting for release").ok();
+        ui::boot::draw_release_keys(display.as_draw_target());
+        display.flush();
+        let mut released_ticks = 0u32;
+        while released_ticks < 50 {
+            delay::ms(&mut cp.SYST, 10);
+            if radio.ptt_asserted() || keypad.any_pressed(&mut cp.SYST) {
+                released_ticks = 0;
+            } else {
+                released_ticks += 1;
+            }
+        }
+    }
+
     // app class
     let mut app = app::App::new(
         radio,
-        Keypad::new(gpiob, gpioc, gpiof),
+        keypad,
         storage,
         flashlight,
         fm_radio,
@@ -328,6 +345,7 @@ fn main() -> ! {
                 .ok();
             }
 
+            app.poll_blink();
             ui::draw(&mut display, &mut app);
         }
         delay::ms(&mut cp.SYST, 10);

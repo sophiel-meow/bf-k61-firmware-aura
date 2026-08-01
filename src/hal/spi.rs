@@ -3,10 +3,13 @@ use kd32f328_pac::spi1;
 #[derive(Clone, Copy)]
 pub enum ClockMode {
     /// CPOL=0, CPHA=0
+    #[allow(dead_code)]
     Mode0,
     /// CPOL=0, CPHA=1
+    #[allow(dead_code)]
     Mode1,
     /// CPOL=1, CPHA=0
+    #[allow(dead_code)]
     Mode2,
     /// CPOL=1, CPHA=1
     Mode3,

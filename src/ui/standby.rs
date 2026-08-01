@@ -130,15 +130,22 @@ where
     let transmitting_here = app.is_transmitting() && is_master;
     let small = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
 
-    // Row A: master marker (master side only) + TX / RX / dual-watch ">>"
+    // Row A: master marker (master side) / not-default marker
     if is_master {
         let marker = super::icons::vfo_default();
+        Image::new(&marker, Point::new(2, top)).draw(lcd).ok();
+    } else if is_watching && app.audio_open() {
+        let marker = super::icons::vfo_not_default();
         Image::new(&marker, Point::new(2, top)).draw(lcd).ok();
     }
     let status = if transmitting_here {
         "TX"
-    } else if is_watching && app.audio_open() {
-        "RX"
+    } else if is_watching && (app.is_monitor() || app.rssi_open()) {
+        if app.rx_blink_on() {
+            "RX"
+        } else {
+            ""
+        }
     } else if app.last_signal_side() == Some(i) {
         ">>"
     } else {

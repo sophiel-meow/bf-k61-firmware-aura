@@ -148,6 +148,13 @@ where
     draw_headlines(lcd, l1, l2);
 }
 
+pub fn draw_release_keys<D>(lcd: &mut D)
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    draw_headlines(lcd, "RELEASE", "ALL KEYS");
+}
+
 /// Boot display mode 1: "VOLTAGE" / actual battery voltage, f4hwn-style.
 pub fn draw_voltage<D>(lcd: &mut D, voltage_cv: u16)
 where

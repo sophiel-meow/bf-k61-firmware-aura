@@ -331,9 +331,12 @@ const STATE_TX_TONE: u16 = 0xC3FA;
 pub enum AfOutState {
     Mute,
     RxAudio,
+    #[allow(dead_code)]
     RxAlarmTone,
     Beep,
+    #[allow(dead_code)]
     CtcDcsTest,
+    #[allow(dead_code)]
     FskTest,
 }
 
