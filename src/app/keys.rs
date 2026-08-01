@@ -269,6 +269,9 @@ fn dispatch_settings(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
                     settings_ops::factory_reset(app);
                 } else {
                     app.settings_ui.editing = false;
+                    if item != settings::SettingItem::Info {
+                        app.save_settings();
+                    }
                 }
             }
             KeyId::Exit if ev.kind == KeyEventKind::Single => {
@@ -312,6 +315,7 @@ fn commit_offset_input(app: &mut App, syst: &mut SYST) {
     if !app.settings_ui.offset_input.is_empty() {
         let hz = app.settings_ui.offset_input.value() * 100;
         settings_ops::apply(app, syst, settings::SettingItem::Offse, hz as i32);
+        app.save_settings();
     }
     app.settings_ui.offset_input.clear();
     app.settings_ui.editing = false;
@@ -349,6 +353,7 @@ fn commit_battery_input(app: &mut App, syst: &mut SYST) {
             settings::SettingItem::BattCal,
             new_cal.clamp(1, u16::MAX as u32) as i32,
         );
+        app.save_settings();
     }
     app.settings_ui.battery_input.clear();
     app.settings_ui.editing = false;

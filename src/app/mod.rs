@@ -15,7 +15,9 @@ mod side;
 use crate::device::flashlight::Flashlight;
 use crate::device::fm_radio::FmRadio;
 use crate::device::keypad::{KeyId, Keypad};
-use crate::device::radio::{ChannelConfig, Modulation, Power, Radio, RogerTone, SubAudio};
+use crate::device::radio::{
+    BandLock, ChannelConfig, Modulation, Power, Radio, RogerTone, SubAudio,
+};
 use crate::device::storage::Storage;
 use crate::flash_map::{self, addr};
 use cortex_m::peripheral::SYST;
@@ -496,7 +498,16 @@ impl App {
                 ani_target: None,
                 cfg: default_cfg,
                 name: [0; 12],
-                vfo_backup: (default_cfg.freq_hz, 0, 0),
+                vfo_backup: side::VfoBackup {
+                    rx_freq_hz: default_cfg.freq_hz,
+                    freq_dir: 0,
+                    offset_hz: 0,
+                    wide_band: default_cfg.wide_band,
+                    power: default_cfg.power,
+                    subaudio_tx: default_cfg.subaudio_tx,
+                    subaudio_rx: default_cfg.subaudio_rx,
+                    ani_target: None,
+                },
             },
             side::Side {
                 vfo_chan: ChVfoMode::Vfo,
@@ -510,7 +521,16 @@ impl App {
                 ani_target: None,
                 cfg: default_cfg,
                 name: [0; 12],
-                vfo_backup: (default_cfg.freq_hz, 0, 0),
+                vfo_backup: side::VfoBackup {
+                    rx_freq_hz: default_cfg.freq_hz,
+                    freq_dir: 0,
+                    offset_hz: 0,
+                    wide_band: default_cfg.wide_band,
+                    power: default_cfg.power,
+                    subaudio_tx: default_cfg.subaudio_tx,
+                    subaudio_rx: default_cfg.subaudio_rx,
+                    ani_target: None,
+                },
             },
         ];
 
@@ -523,6 +543,19 @@ impl App {
                 let vfo = flash_map::VfoMode::from_bytes(&bytes);
                 if vfo.freq_deci_hz() != 0 {
                     s.load_vfo(&vfo);
+                }
+            }
+        }
+
+        // Restore each side's last active mode (VFO vs Channel)
+        if let Some(state) = storage.load_channel_state() {
+            for (half, s) in sides.iter_mut().enumerate() {
+                let is_channel = state[half * 3] != 0;
+                let num = u16::from_le_bytes([state[half * 3 + 1], state[half * 3 + 2]])
+                    .min(MAX_CHANNEL_NUM);
+                if is_channel && !storage.is_channel_empty(num) {
+                    let ch = storage.read_channel(num);
+                    s.load_channel(num, &ch);
                 }
             }
         }
@@ -540,6 +573,7 @@ impl App {
         radio.set_roger_tone(RogerTone::from_u8(settings.roger_tone));
         radio.set_scramble_level(syst, settings.scramble_level);
         radio.set_rit_offset(settings.rit_offset as i32 * 10);
+        radio.set_tx_allowed(BandLock::from_u8(settings.band_lock).tx_ranges());
 
         App {
             radio,
@@ -731,6 +765,17 @@ impl App {
         self.storage.save_settings(&self.settings);
     }
 
+    pub fn save_channel_state(&mut self) {
+        let mut buf = [0u8; 6];
+        for (half, s) in self.sides.iter().enumerate() {
+            buf[half * 3] = matches!(s.vfo_chan, ChVfoMode::Channel) as u8;
+            let bytes = s.channel_num.to_le_bytes();
+            buf[half * 3 + 1] = bytes[0];
+            buf[half * 3 + 2] = bytes[1];
+        }
+        self.storage.save_channel_state(&buf);
+    }
+
     fn load_channel_num(&mut self, num: u16) {
         let ch = self.storage.read_channel(num);
         self.sides[self.master].load_channel(num, &ch);
@@ -833,9 +878,16 @@ impl App {
         let s = &mut self.sides[self.master];
         match s.vfo_chan {
             ChVfoMode::Vfo => {
-                // Channel mode reuses rx_freq_hz/freq_dir/offset_hz, so
-                // stash the VFO's own values before they get overwritten.
-                s.vfo_backup = (s.rx_freq_hz, s.freq_dir, s.offset_hz);
+                s.vfo_backup = side::VfoBackup {
+                    rx_freq_hz: s.rx_freq_hz,
+                    freq_dir: s.freq_dir,
+                    offset_hz: s.offset_hz,
+                    wide_band: s.cfg.wide_band,
+                    power: s.cfg.power,
+                    subaudio_tx: s.cfg.subaudio_tx,
+                    subaudio_rx: s.cfg.subaudio_rx,
+                    ani_target: s.ani_target,
+                };
                 let num = s.channel_num;
                 // The last-selected channel number may not actually be
                 // programmed, land on the nearest real one instead of showing
@@ -852,11 +904,17 @@ impl App {
                 }
             }
             ChVfoMode::Channel => {
-                let (rx_freq_hz, freq_dir, offset_hz) = s.vfo_backup;
+                let backup = s.vfo_backup;
                 s.vfo_chan = ChVfoMode::Vfo;
-                s.rx_freq_hz = rx_freq_hz;
-                s.freq_dir = freq_dir;
-                s.offset_hz = offset_hz;
+                s.name = [0; 12];
+                s.rx_freq_hz = backup.rx_freq_hz;
+                s.freq_dir = backup.freq_dir;
+                s.offset_hz = backup.offset_hz;
+                s.cfg.wide_band = backup.wide_band;
+                s.cfg.power = backup.power;
+                s.cfg.subaudio_tx = backup.subaudio_tx;
+                s.cfg.subaudio_rx = backup.subaudio_rx;
+                s.ani_target = backup.ani_target;
                 s.refresh_cfg_freqs();
             }
         }

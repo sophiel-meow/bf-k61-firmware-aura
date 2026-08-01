@@ -238,6 +238,7 @@ fn main() -> ! {
         if power.debounced_off(&mut cp.SYST) {
             writeln!(dbg, "power switch off, shutting down").ok();
             app.radio_mut().rf_off(&mut cp.SYST);
+            app.save_channel_state();
             power.shutdown(&mut cp.SYST);
         }
 

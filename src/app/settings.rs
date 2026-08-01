@@ -39,11 +39,12 @@ pub enum SettingItem {
     BootMode,
     BootSnd,
     BattCal,
+    FLock,
     Info,
     Reset,
 }
 
-pub const SETTINGS_ORDER: [SettingItem; 41] = [
+pub const SETTINGS_ORDER: [SettingItem; 42] = [
     SettingItem::Sql,
     SettingItem::Step,
     SettingItem::Tot,
@@ -83,6 +84,7 @@ pub const SETTINGS_ORDER: [SettingItem; 41] = [
     SettingItem::BootMode,
     SettingItem::BootSnd,
     SettingItem::BattCal,
+    SettingItem::FLock,
     SettingItem::Info,
     SettingItem::Reset,
 ];
@@ -129,6 +131,7 @@ impl SettingItem {
             SettingItem::BootMode => "BOOTSCR",
             SettingItem::BootSnd => "BOOTSND",
             SettingItem::BattCal => "BATCAL",
+            SettingItem::FLock => "FLOCK",
             SettingItem::Info => "INFO",
             SettingItem::Reset => "RESET",
         }

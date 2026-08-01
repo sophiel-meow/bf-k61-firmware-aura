@@ -1,6 +1,18 @@
 use super::{power_from_raw, power_to_raw, subaudio_from_code, subaudio_to_code, ChVfoMode};
-use crate::device::radio::ChannelConfig;
+use crate::device::radio::{ChannelConfig, Power, SubAudio};
 use crate::flash_map::{self, addr};
+
+#[derive(Clone, Copy)]
+pub(super) struct VfoBackup {
+    pub rx_freq_hz: u32,
+    pub freq_dir: u8,
+    pub offset_hz: u32,
+    pub wide_band: bool,
+    pub power: Power,
+    pub subaudio_tx: SubAudio,
+    pub subaudio_rx: SubAudio,
+    pub ani_target: Option<u8>,
+}
 
 #[derive(Clone)]
 pub(super) struct Side {
@@ -20,13 +32,7 @@ pub(super) struct Side {
     /// Raw 12-byte channel name (only meaningful when `vfo_chan ==
     /// Channel`); `[0; 12]` in VFO mode or for an unnamed channel.
     pub name: [u8; 12],
-    /// Snapshot of `(rx_freq_hz, freq_dir, offset_hz)` taken the moment
-    /// this side leaves VFO mode, since Channel mode reuses those same
-    /// fields: without this, switching back to VFO mode has nothing left
-    /// to restore and keeps showing the channel's frequency. Restored
-    /// verbatim on the way back to `Vfo`; only ever written on the way out
-    /// of it (see `App::toggle_vfo_channel`).
-    pub vfo_backup: (u32, u8, u32),
+    pub vfo_backup: VfoBackup,
 }
 
 impl Side {
@@ -58,11 +64,20 @@ impl Side {
         self.freq_dir = vfo.freq_dir();
         self.ani_target = vfo.ani_target();
         self.offset_hz = vfo.offset_deci_hz() * 10;
-        self.vfo_backup = (self.rx_freq_hz, self.freq_dir, self.offset_hz);
         self.cfg.wide_band = !vfo.wide_narrow();
         self.cfg.power = power_from_raw(vfo.tx_power);
         self.cfg.subaudio_tx = subaudio_from_code(vfo.tx_dcs_cts_num);
         self.cfg.subaudio_rx = subaudio_from_code(vfo.rx_dcs_cts_num);
+        self.vfo_backup = VfoBackup {
+            rx_freq_hz: self.rx_freq_hz,
+            freq_dir: self.freq_dir,
+            offset_hz: self.offset_hz,
+            wide_band: self.cfg.wide_band,
+            power: self.cfg.power,
+            subaudio_tx: self.cfg.subaudio_tx,
+            subaudio_rx: self.cfg.subaudio_rx,
+            ani_target: self.ani_target,
+        };
         self.refresh_cfg_freqs();
     }
 

@@ -70,7 +70,7 @@ impl FreqRange {
     }
 }
 
-const MAX_FREQ_RANGES: usize = 4;
+const MAX_FREQ_RANGES: usize = 8;
 
 #[derive(Clone, Copy)]
 pub struct FreqRanges {
@@ -128,6 +128,101 @@ impl FreqRanges {
         let lo = active.iter().map(|r| r.low_hz).min().unwrap_or(0);
         let hi = active.iter().map(|r| r.high_hz).max().unwrap_or(u32::MAX);
         (lo, hi)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum BandLock {
+    /// EU & CN amateur: 144-146MHz + 430-440MHz
+    Ce,
+    /// US amateur: 144-148MHz + 420-450MHz.
+    Fcc,
+    /// UK amateur: 144-148MHz + 430-440MHz.
+    Gb,
+    /// 137-174MHz + 400-430MHz.
+    Mhz430,
+    /// 137-174MHz + 400-438MHz.
+    Mhz438,
+    /// PMR446: 446.00625-446.19375MHz.
+    Pmr,
+    /// FRS/GMRS (462.550-462.725MHz + 467.550-467.725MHz) plus the 5 fixed
+    /// MURS channels.
+    GmrsFrsMurs,
+    /// Canadian amateur: 144-148MHz + 430-450MHz.
+    Ca,
+    /// TX disabled on every frequency.
+    All,
+    /// No restriction beyond the hardware's own synthesizer range
+    None,
+}
+
+impl BandLock {
+    pub fn from_u8(v: u8) -> BandLock {
+        match v {
+            1 => BandLock::Fcc,
+            2 => BandLock::Gb,
+            3 => BandLock::Mhz430,
+            4 => BandLock::Mhz438,
+            5 => BandLock::Pmr,
+            6 => BandLock::GmrsFrsMurs,
+            7 => BandLock::Ca,
+            8 => BandLock::All,
+            9 => BandLock::None,
+            _ => BandLock::Ce,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            BandLock::Ce => "CE HAM",
+            BandLock::Fcc => "FCC HAM",
+            BandLock::Gb => "GB HAM",
+            BandLock::Mhz430 => "400-430",
+            BandLock::Mhz438 => "400-438",
+            BandLock::Pmr => "PMR446",
+            BandLock::GmrsFrsMurs => "GMRS/FRS",
+            BandLock::Ca => "CA HAM",
+            BandLock::All => "ALL LOCK",
+            BandLock::None => "UNLOCK",
+        }
+    }
+
+    pub fn tx_ranges(self) -> FreqRanges {
+        const fn r(low_hz: u32, high_hz: u32) -> FreqRange {
+            FreqRange { low_hz, high_hz }
+        }
+        match self {
+            BandLock::Fcc => {
+                FreqRanges::from_slice(&[r(144_000_000, 148_000_000), r(420_000_000, 450_000_000)])
+            }
+            BandLock::Ce => {
+                FreqRanges::from_slice(&[r(144_000_000, 146_000_000), r(430_000_000, 440_000_000)])
+            }
+            BandLock::Gb => {
+                FreqRanges::from_slice(&[r(144_000_000, 148_000_000), r(430_000_000, 440_000_000)])
+            }
+            BandLock::Mhz430 => {
+                FreqRanges::from_slice(&[r(137_000_000, 174_000_000), r(400_000_000, 430_000_000)])
+            }
+            BandLock::Mhz438 => {
+                FreqRanges::from_slice(&[r(137_000_000, 174_000_000), r(400_000_000, 438_000_000)])
+            }
+            BandLock::Pmr => FreqRanges::from_slice(&[r(446_006_250, 446_193_750)]),
+            BandLock::GmrsFrsMurs => FreqRanges::from_slice(&[
+                r(462_550_000, 462_725_000),
+                r(467_550_000, 467_725_000),
+                r(151_820_000, 151_820_000),
+                r(151_880_000, 151_880_000),
+                r(151_940_000, 151_940_000),
+                r(154_570_000, 154_570_000),
+                r(154_600_000, 154_600_000),
+            ]),
+            BandLock::Ca => {
+                FreqRanges::from_slice(&[r(144_000_000, 148_000_000), r(430_000_000, 450_000_000)])
+            }
+            BandLock::All => FreqRanges::empty(),
+            BandLock::None => FreqRanges::hardware(),
+        }
     }
 }
 

@@ -5,7 +5,7 @@ use super::{
     subaudio_index, wrap_step, App, Mode, FIRMWARE_VERSION, RTONE_HZ_DIV_10, STEP_LIST_DECI_HZ,
     SUBAUDIO_MAX_INDEX,
 };
-use crate::device::radio::{Power, RogerTone, SubAudio};
+use crate::device::radio::{BandLock, Power, RogerTone, SubAudio};
 use core::fmt::Write;
 use cortex_m::peripheral::{SCB, SYST};
 
@@ -71,6 +71,7 @@ pub(super) fn current_value(app: &App, item: SettingItem) -> i32 {
         SettingItem::BootMode => app.settings.boot_display_mode as i32,
         SettingItem::BootSnd => app.settings.boot_sound_enabled as i32,
         SettingItem::BattCal => app.settings.battery_cal_raw as i32,
+        SettingItem::FLock => app.settings.band_lock as i32,
         SettingItem::Info => app.settings_ui.info_page as i32,
         _ => 0,
     }
@@ -126,6 +127,7 @@ pub(super) fn adjust(app: &mut App, syst: &mut SYST, item: SettingItem, up: bool
         | SettingItem::Side2Long
         | SettingItem::BandShort
         | SettingItem::BandLong => clamp_step(cur, up, 0, 10),
+        SettingItem::FLock => clamp_step(cur, up, 0, 9),
         _ => cur,
     };
     apply(app, syst, item, new_val);
@@ -237,6 +239,10 @@ pub(super) fn apply(app: &mut App, syst: &mut SYST, item: SettingItem, v: i32) {
         }
         SettingItem::BootSnd => app.settings.boot_sound_enabled = v != 0,
         SettingItem::BattCal => app.settings.battery_cal_raw = v as u16,
+        SettingItem::FLock => {
+            app.settings.band_lock = v as u8;
+            app.radio.set_tx_allowed(BandLock::from_u8(v as u8).tx_ranges());
+        }
         SettingItem::Rit => {
             app.settings.rit_offset = v as i8;
             app.radio.set_rit_offset(v * RIT_STEP_HZ);
@@ -474,6 +480,10 @@ pub fn value_text_for(app: &App, index: usize, item: SettingItem, w: &mut dyn Wr
         | SettingItem::BandLong => {
             let idx = current_value(app, item).clamp(0, 10) as u8;
             let _ = write!(w, "{}", keyfn::from_u8(idx).label());
+        }
+        SettingItem::FLock => {
+            let idx = current_value(app, item).clamp(0, 9) as u8;
+            let _ = write!(w, "{}", BandLock::from_u8(idx).label());
         }
         _ => {
             let _ = write!(w, "{}", current_value(app, item));
