@@ -1449,6 +1449,12 @@ impl App {
     pub fn side_modulation(&self, index: usize) -> Modulation {
         self.sides[index].cfg.modulation
     }
+    pub fn side_wide_band(&self, index: usize) -> bool {
+        self.sides[index].cfg.wide_band
+    }
+    pub fn side_reversed(&self, index: usize) -> bool {
+        self.sides[index].reversed
+    }
     /// Repeater shift direction: 0 = off/simplex, 1 = `+`, 2 = `-`.
     pub fn side_freq_dir(&self, index: usize) -> u8 {
         self.sides[index].shift_dir_offset().0

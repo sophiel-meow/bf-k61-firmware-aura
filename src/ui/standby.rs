@@ -4,7 +4,7 @@ use crate::device::radio::{Modulation, Power, SubAudio};
 use core::fmt::Write as _;
 use embedded_graphics::image::Image;
 use embedded_graphics::mono_font::{
-    ascii::{FONT_5X8, FONT_6X10},
+    ascii::{FONT_4X6, FONT_5X8, FONT_6X10},
     MonoTextStyle,
 };
 use embedded_graphics::pixelcolor::BinaryColor;
@@ -412,8 +412,9 @@ fn tone_mode_label(tx: SubAudio, rx: SubAudio) -> &'static str {
     }
 }
 
-/// Info line: modulation, TX power, subaudio tone, and
-/// repeater shift direction.
+const MODE_LINE_WIDTH_CHARS: usize =
+    ((128 - 2 * RIGHT_MARGIN) as u32 / FONT_4X6.character_size.width) as usize;
+
 fn draw_mode_line<D>(lcd: &mut D, app: &app::App, i: usize, baseline_y: i32)
 where
     D: DrawTarget<Color = BinaryColor>,
@@ -424,9 +425,9 @@ where
         Modulation::Usb => "USB",
     };
     let power = match app.side_power(i) {
-        Power::Low => "Lo",
-        Power::Mid => "Md",
-        Power::High => "Hi",
+        Power::Low => "LOW",
+        Power::Mid => "MID",
+        Power::High => "HIGH",
     };
     let tone = tone_mode_label(app.side_subaudio_tx(i), app.side_subaudio_rx(i));
     let dir = if app.side_offset_hz(i) == 0 {
@@ -438,16 +439,47 @@ where
             _ => "",
         }
     };
+    let bandwidth = if app.side_wide_band(i) { "WIDE" } else { "NAR" };
+    let reversed = if app.side_reversed(i) { "R" } else { "" };
 
-    let mut line: TextBuf<20> = TextBuf::new();
-    write!(line, "{} {} {} {}", modulation, power, tone, dir).ok();
+    let mut line: TextBuf<32> = TextBuf::new();
+    write_spaced_fields(
+        &mut line,
+        &[modulation, power, tone, dir, bandwidth, reversed],
+    );
     Text::new(
         line.as_str(),
         Point::new(2, baseline_y),
-        MonoTextStyle::new(&FONT_6X10, BinaryColor::On),
+        MonoTextStyle::new(&FONT_4X6, BinaryColor::On),
     )
     .draw(lcd)
     .ok();
+}
+
+fn write_spaced_fields<const N: usize>(buf: &mut TextBuf<N>, fields: &[&str]) {
+    let present = fields.iter().filter(|f| !f.is_empty());
+    let count = present.clone().count();
+    if count == 0 {
+        return;
+    }
+    let content_chars: usize = present.clone().map(|f| f.len()).sum();
+    let gaps = count - 1;
+    let spacing = match MODE_LINE_WIDTH_CHARS
+        .saturating_sub(content_chars)
+        .checked_div(gaps)
+    {
+        Some(v) => v.max(1),
+        None => 0,
+    };
+
+    for (idx, field) in present.enumerate() {
+        if idx > 0 {
+            for _ in 0..spacing {
+                buf.write_str(" ").ok();
+            }
+        }
+        buf.write_str(field).ok();
+    }
 }
 
 fn dtmf_char(v: u8) -> char {
