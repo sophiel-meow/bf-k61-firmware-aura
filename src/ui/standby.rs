@@ -414,61 +414,18 @@ where
     }
 }
 
-/// FD6818 REG 0x67[8:1] → approximate dBm.
-/// BK4819 uses 160;
-/// FD6818 squelch thresholds (SQL_TH_IN 85-107) suggest a larger offset.
-const FD6818_RSSI_REF_DBM: i16 = 208;
-
 /// Number of bar segments: S1..S9 (9 solid) + 4 over-S9 (hollow) = 13
 const S_METER_SEGS: u8 = 13;
-
-fn map(x: i32, in_min: i32, in_max: i32, out_min: i32, out_max: i32) -> i32 {
-    (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
-}
-
-fn s_meter_level(rssi: u8) -> u8 {
-    let dbm = rssi as i32 - FD6818_RSSI_REF_DBM as i32;
-    let pos = (-dbm).clamp(53, 141); // 53 = loudest, 141 = noise floor
-
-    if pos >= 93 {
-        // S1 … S9 spread over [141, 93]
-        map(pos, 141, 93, 1, 9).clamp(1, 9) as u8
-    } else {
-        // stronger than S9: 4 over-S9 bars (0–40 dB, 10 dB/bar)
-        let over = map(pos, 93, 53, 0, 4).clamp(0, 4);
-        (9 + over) as u8
-    }
-}
-
-fn s_meter_label(level: u8) -> &'static str {
-    match level {
-        0 => "S0",
-        1 => "S1",
-        2 => "S2",
-        3 => "S3",
-        4 => "S4",
-        5 => "S5",
-        6 => "S6",
-        7 => "S7",
-        8 => "S8",
-        9 => "S9",
-        10 => "+10",
-        11 => "+20",
-        12 => "+30",
-        _ => "+40",
-    }
-}
 
 fn draw_s_meter<D>(lcd: &mut D, app: &app::App, row_y: i32)
 where
     D: DrawTarget<Color = BinaryColor>,
 {
-    let rssi = app.rssi_raw();
-    let level = s_meter_level(rssi);
-    let dbm = rssi as i32 - FD6818_RSSI_REF_DBM as i32;
+    let dbm = app.rssi_dbm();
+    let level = app.s_meter_level();
 
     let mut line: TextBuf<20> = TextBuf::new();
-    write!(line, "{}dBm {}", dbm, s_meter_label(level)).ok();
+    write!(line, "{}dBm {}", dbm, app::s_meter_label(level)).ok();
     let style = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
     Text::new(
         line.as_str(),

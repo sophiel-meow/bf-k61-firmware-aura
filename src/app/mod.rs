@@ -44,6 +44,9 @@ const POWER_SAVE_SLEEP_TICKS_PER_LEVEL: u16 = 10;
 
 const BACKLIGHT_STEP_TICKS: u16 = 500;
 
+/// TODO: calibrate per band
+const RSSI_DBM_BASE: i16 = 160 - 6;
+
 const VOX_THRESHOLD_TABLE: [u8; 11] = [127, 52, 62, 72, 84, 95, 106, 117, 125, 132, 140];
 const VOX_TX_HYSTERESIS: u8 = 8;
 const VOX_HOLD_AFTER_RX_TICKS: u8 = 150;
@@ -217,6 +220,29 @@ fn subaudio_index(sub: SubAudio) -> i32 {
             }
             None => -1,
         },
+    }
+}
+
+fn map(x: i32, in_min: i32, in_max: i32, out_min: i32, out_max: i32) -> i32 {
+    (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
+}
+
+pub fn s_meter_label(level: u8) -> &'static str {
+    match level {
+        0 => "S0",
+        1 => "S1",
+        2 => "S2",
+        3 => "S3",
+        4 => "S4",
+        5 => "S5",
+        6 => "S6",
+        7 => "S7",
+        8 => "S8",
+        9 => "S9",
+        10 => "+10",
+        11 => "+20",
+        12 => "+30",
+        _ => "+40",
     }
 }
 
@@ -968,12 +994,23 @@ impl App {
         self.battery_bars
     }
 
-    pub fn rssi_raw(&self) -> u8 {
-        self.rssi_raw
-    }
-
     pub fn set_rssi_raw(&mut self, val: u8) {
         self.rssi_raw = val;
+    }
+
+    pub fn rssi_dbm(&self) -> i32 {
+        self.rssi_raw as i32 - RSSI_DBM_BASE as i32
+    }
+
+    pub fn s_meter_level(&self) -> u8 {
+        let pos = (-self.rssi_dbm()).clamp(53, 141);
+
+        if pos >= 93 {
+            map(pos, 141, 93, 1, 9).clamp(1, 9) as u8
+        } else {
+            let over = map(pos, 93, 53, 0, 4).clamp(0, 4);
+            (9 + over) as u8
+        }
     }
 
     pub fn mic_level(&self) -> u8 {
