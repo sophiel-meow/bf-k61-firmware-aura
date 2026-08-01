@@ -1561,6 +1561,14 @@ impl App {
         self.input.digits[idx]
     }
 
+    pub fn channel_input_len(&self) -> usize {
+        if matches!(self.sides[self.master].vfo_chan, ChVfoMode::Channel) {
+            self.input.len
+        } else {
+            0
+        }
+    }
+
     pub fn dtmf_dial_active(&self) -> bool {
         self.dtmf_dial.is_some()
     }

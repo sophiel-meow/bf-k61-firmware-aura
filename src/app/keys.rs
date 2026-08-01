@@ -113,7 +113,13 @@ fn dispatch_standby(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
                 KeyId::Vm => app.toggle_vfo_channel(syst),
                 KeyId::Ab => app.switch_side(syst),
                 KeyId::Asterisk => app.dtmf_dial = Some(DigitInput::new()),
-                KeyId::Menu => enter_app_menu(app),
+                KeyId::Menu => {
+                    if app.sides[app.master].vfo_chan == ChVfoMode::Channel && app.input.len > 0 {
+                        app.commit_input(syst);
+                    } else {
+                        enter_app_menu(app);
+                    }
+                }
                 KeyId::Side1 | KeyId::Side2 | KeyId::Band => {
                     let func = keyfn::from_u8(short_function(app, ev.key));
                     keyfn::invoke(app, syst, func);
@@ -251,6 +257,13 @@ fn dispatch_settings(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
                 } else if item != settings::SettingItem::Reset {
                     settings_ops::adjust(app, syst, item, up);
                 }
+            }
+            KeyId::Digit0
+                if ev.kind == KeyEventKind::Single
+                    && app.settings_ui.editing
+                    && item.is_scalar() =>
+            {
+                settings_ops::apply(app, syst, item, settings_ops::scalar_floor(item));
             }
             KeyId::Menu if ev.kind == KeyEventKind::Single => {
                 if !app.settings_ui.editing {

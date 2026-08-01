@@ -154,19 +154,23 @@ where
 
     // Row B: channel number / VFO label
     if is_master || (!app.dtmf_dial_active()) {
-        let mut chan_label: TextBuf<8> = TextBuf::new();
-        if app.side_is_channel_mode(i) {
-            write!(chan_label, "M{}", app.side_channel_num(i)).ok();
+        if is_master && app.channel_input_len() > 0 {
+            draw_channel_number_input(lcd, app, top + 8 + FONT_5X8.baseline as i32);
         } else {
-            write!(chan_label, "VFO").ok();
+            let mut chan_label: TextBuf<8> = TextBuf::new();
+            if app.side_is_channel_mode(i) {
+                write!(chan_label, "M{}", app.side_channel_num(i)).ok();
+            } else {
+                write!(chan_label, "VFO").ok();
+            }
+            Text::new(
+                chan_label.as_str(),
+                Point::new(2, top + 8 + FONT_5X8.baseline as i32),
+                small,
+            )
+            .draw(lcd)
+            .ok();
         }
-        Text::new(
-            chan_label.as_str(),
-            Point::new(2, top + 8 + FONT_5X8.baseline as i32),
-            small,
-        )
-        .draw(lcd)
-        .ok();
     }
     // Right-hand primary slot
     let channel_mode = app.side_is_channel_mode(i);
@@ -302,6 +306,29 @@ where
         }
     }
     draw_right_aligned(lcd, buf.as_str(), &PROFONT_14_POINT, baseline_y);
+}
+
+fn draw_channel_number_input<D>(lcd: &mut D, app: &app::App, y: i32)
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    let len = app.channel_input_len();
+    let mut buf: TextBuf<8> = TextBuf::new();
+    write!(buf, "M").ok();
+    for pos in 0..3usize {
+        if pos + len < 3 {
+            write!(buf, "-").ok();
+        } else {
+            write!(buf, "{}", app.freq_input_digit(pos + len - 3)).ok();
+        }
+    }
+    Text::new(
+        buf.as_str(),
+        Point::new(2, y),
+        MonoTextStyle::new(&FONT_5X8, BinaryColor::On),
+    )
+    .draw(lcd)
+    .ok();
 }
 
 fn draw_dtmf_dial_input<D>(lcd: &mut D, app: &app::App, baseline_y: i32)

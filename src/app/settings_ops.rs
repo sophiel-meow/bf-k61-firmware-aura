@@ -105,9 +105,12 @@ pub(super) fn adjust(app: &mut App, syst: &mut SYST, item: SettingItem, up: bool
         SettingItem::VoxDly => clamp_step(cur, up, 0, 15),
         SettingItem::Rptrl => clamp_step(cur, up, 0, 10),
         SettingItem::BootMode => clamp_step(cur, up, 0, 3),
-        SettingItem::AniCall => {
-            clamp_step(cur, up, -1, crate::flash_map::addr::CONTACT_COUNT as i32 - 1)
-        }
+        SettingItem::AniCall => clamp_step(
+            cur,
+            up,
+            -1,
+            crate::flash_map::addr::CONTACT_COUNT as i32 - 1,
+        ),
         SettingItem::TxPr | SettingItem::Roge => clamp_step(cur, up, 0, 2),
         SettingItem::RxCts | SettingItem::TxCts => wrap_step(cur, up, -1, SUBAUDIO_MAX_INDEX),
         SettingItem::Scrm => clamp_step(cur, up, 0, 3),
@@ -131,6 +134,14 @@ pub(super) fn adjust(app: &mut App, syst: &mut SYST, item: SettingItem, up: bool
         _ => cur,
     };
     apply(app, syst, item, new_val);
+}
+
+pub(super) fn scalar_floor(item: SettingItem) -> i32 {
+    match item {
+        SettingItem::AniCall | SettingItem::RxCts | SettingItem::TxCts => -1,
+        SettingItem::VoxLv => 1,
+        _ => 0,
+    }
 }
 
 pub(super) fn apply(app: &mut App, syst: &mut SYST, item: SettingItem, v: i32) {
@@ -241,7 +252,8 @@ pub(super) fn apply(app: &mut App, syst: &mut SYST, item: SettingItem, v: i32) {
         SettingItem::BattCal => app.settings.battery_cal_raw = v as u16,
         SettingItem::FLock => {
             app.settings.band_lock = v as u8;
-            app.radio.set_tx_allowed(BandLock::from_u8(v as u8).tx_ranges());
+            app.radio
+                .set_tx_allowed(BandLock::from_u8(v as u8).tx_ranges());
         }
         SettingItem::Rit => {
             app.settings.rit_offset = v as i8;

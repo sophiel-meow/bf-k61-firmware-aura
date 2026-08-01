@@ -259,6 +259,17 @@ fn adjust(edit: &mut ChannelEdit, field: Field, up: bool) {
     apply(edit, field, new_val);
 }
 
+/// Value the `0` digit key jumps a scalar field straight to.
+/// `RxCts`/`TxCts`/`AniCall`'s "off"/"none" sentinel is `-1`,
+/// one below the first real enumerated choice; every other scalar
+/// field's floor is `0`.
+fn scalar_floor(field: Field) -> i32 {
+    match field {
+        Field::RxCts | Field::TxCts | Field::AniCall => -1,
+        _ => 0,
+    }
+}
+
 fn apply(edit: &mut ChannelEdit, field: Field, v: i32) {
     match field {
         Field::Sftd => {
@@ -271,9 +282,7 @@ fn apply(edit: &mut ChannelEdit, field: Field, v: i32) {
         Field::Wn => edit.working.set_wide_narrow(v != 0),
         Field::ScanAdd => edit.working.set_scan_add(v != 0),
         Field::BusyLock => edit.working.set_busy_lock(v != 0),
-        Field::AniCall => edit
-            .working
-            .set_ani_target((v >= 0).then_some(v as u8)),
+        Field::AniCall => edit.working.set_ani_target((v >= 0).then_some(v as u8)),
         _ => {}
     }
 }
@@ -532,6 +541,9 @@ fn dispatch_detail(app: &mut App, ev: KeyEvent, mut edit: ChannelEdit) {
             } else if field.is_scalar() {
                 adjust(&mut edit, field, up);
             }
+        }
+        KeyId::Digit0 if ev.kind == KeyEventKind::Single && edit.editing && field.is_scalar() => {
+            apply(&mut edit, field, scalar_floor(field));
         }
         KeyId::Menu if ev.kind == KeyEventKind::Single => {
             if !edit.editing {

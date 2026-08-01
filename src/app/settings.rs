@@ -140,6 +140,13 @@ impl SettingItem {
     pub fn is_placeholder(self) -> bool {
         false
     }
+
+    pub fn is_scalar(self) -> bool {
+        !matches!(
+            self,
+            SettingItem::Offse | SettingItem::BattCal | SettingItem::Info | SettingItem::Reset
+        )
+    }
 }
 
 /// Standard CTCSS tones, tenths of Hz (67.0Hz..254.1Hz), for RXCTS/TXCTS to
