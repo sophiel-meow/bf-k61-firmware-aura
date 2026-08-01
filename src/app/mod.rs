@@ -1439,10 +1439,10 @@ impl App {
     }
     /// Repeater shift direction: 0 = off/simplex, 1 = `+`, 2 = `-`.
     pub fn side_freq_dir(&self, index: usize) -> u8 {
-        self.sides[index].freq_dir
+        self.sides[index].shift_dir_offset().0
     }
     pub fn side_offset_hz(&self, index: usize) -> u32 {
-        self.sides[index].offset_hz
+        self.sides[index].shift_dir_offset().1
     }
     /// Trimmed channel name, `""` in VFO mode or for an unnamed channel.
     pub fn side_name_str(&self, index: usize) -> &str {

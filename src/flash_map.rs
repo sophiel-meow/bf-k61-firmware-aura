@@ -1,49 +1,49 @@
 pub mod addr {
     pub const CHAN_ADDR: u32 = 0x0000;
     pub const CHAN_SIZE: u32 = 32;
-    pub const NAME_ADDR_SHIFT: u32 = 20;
+    // pub const NAME_ADDR_SHIFT: u32 = 20;
     pub const NAME_SIZE: usize = 12;
 
     pub const VFO_INFO_ADDR: u32 = 0x8000;
     pub const VFO_SIZE: u32 = 32;
-    pub const VFO1_ADDR: u32 = 0x8000;
-    pub const VFO2_ADDR: u32 = 0x8020;
+    // pub const VFO1_ADDR: u32 = 0x8000;
+    // pub const VFO2_ADDR: u32 = 0x8020;
 
     pub const RADIO_IMFOS_ADDR: u32 = 0x9000;
-    pub const RADIO_SIZE: u32 = 64;
-    pub const PWR_MSG_ADDR: u32 = 0x9040;
+    // pub const RADIO_SIZE: u32 = 64;
+    // pub const PWR_MSG_ADDR: u32 = 0x9040;
 
     pub const DTMFINFOR_ADDR: u32 = 0xA000;
-    pub const DTMF_KILLED_ADDR: u32 = 0xA010;
+    // pub const DTMF_KILLED_ADDR: u32 = 0xA010;
     pub const DTMF_CODE_ADDR: u32 = 0xA020;
     pub const CONTACT_SIZE: u32 = 16;
     pub const CONTACT_COUNT: usize = 20;
-    pub const DTMF_ONLINE_ADDR: u32 = 0xA180;
-    pub const DTMF_OFFLINE_ADDR: u32 = 0xA190;
+    // pub const DTMF_ONLINE_ADDR: u32 = 0xA180;
+    // pub const DTMF_OFFLINE_ADDR: u32 = 0xA190;
 
-    pub const SCAN_LIST_ADDR: u32 = 0xB000;
+    // pub const SCAN_LIST_ADDR: u32 = 0xB000;
 
-    pub const FM_IMFOS_ADDR: u32 = 0xC000;
+    // pub const FM_IMFOS_ADDR: u32 = 0xC000;
     pub const FM_ADDR: u32 = 0xC000;
 
-    pub const RF_MODEL_ADDR: u32 = 0xD000;
-    pub const RF_TXEN_ADDR: u32 = 0xD001;
+    // pub const RF_MODEL_ADDR: u32 = 0xD000;
+    // pub const RF_TXEN_ADDR: u32 = 0xD001;
 
     pub const SYSTEMRAN_ADDR: u32 = 0xE000;
-    pub const F1CHAN_ADDR: u32 = 0xE000;
-    pub const F2CHAN_ADDR: u32 = 0xE002;
+    // pub const F1CHAN_ADDR: u32 = 0xE000;
+    // pub const F2CHAN_ADDR: u32 = 0xE002;
 
-    pub const DEBUG_ADDR: u32 = 0xF000;
+    // pub const DEBUG_ADDR: u32 = 0xF000;
     pub const PA_TABLE_BASE_HIGH: u32 = 0xF000;
     pub const PA_TABLE_BASE_MID: u32 = 0xF040;
     pub const PA_TABLE_BASE_LOW: u32 = 0xF080;
     pub const DEV_BATT_ADDR: u32 = 0xF200;
-    pub const RF_MODULATION_ADDR: u32 = 0xF210;
-    pub const DEV_LANGUAGE_ADDR: u32 = 0xF220;
-    pub const DEV_BTEN_ADDR: u32 = 0xF221;
-    pub const BAND_ADDR: u32 = 0xF230;
-    pub const BAND2_ADDR: u32 = 0xF240;
-    pub const MODEL_ADDR: u32 = 0xF250;
+    // pub const RF_MODULATION_ADDR: u32 = 0xF210;
+    // pub const DEV_LANGUAGE_ADDR: u32 = 0xF220;
+    // pub const DEV_BTEN_ADDR: u32 = 0xF221;
+    // pub const BAND_ADDR: u32 = 0xF230;
+    // pub const BAND2_ADDR: u32 = 0xF240;
+    // pub const MODEL_ADDR: u32 = 0xF250;
 
     pub const BOOT_LOGO_ADDR: u32 = 0x000C_0000;
 

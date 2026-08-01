@@ -2,8 +2,8 @@ use super::keyfn;
 use super::settings::SettingItem;
 use super::{
     channel_display_mode_from_u8, clamp_step, power_from_raw, power_to_raw, subaudio_from_index,
-    subaudio_index, wrap_step, App, Mode, FIRMWARE_VERSION, RTONE_HZ_DIV_10, STEP_LIST_DECI_HZ,
-    SUBAUDIO_MAX_INDEX,
+    subaudio_index, wrap_step, App, ChVfoMode, Mode, FIRMWARE_VERSION, RTONE_HZ_DIV_10,
+    STEP_LIST_DECI_HZ, SUBAUDIO_MAX_INDEX,
 };
 use crate::device::radio::{BandLock, Power, RogerTone, SubAudio};
 use core::fmt::Write;
@@ -45,8 +45,8 @@ pub(super) fn current_value(app: &App, item: SettingItem) -> i32 {
         SettingItem::RxCts => subaudio_index(side.cfg.subaudio_rx),
         SettingItem::TxCts => subaudio_index(side.cfg.subaudio_tx),
         SettingItem::Scrm => app.settings.scramble_level as i32,
-        SettingItem::Sftd => side.freq_dir as i32,
-        SettingItem::Offse => side.offset_hz as i32,
+        SettingItem::Sftd => side.shift_dir_offset().0 as i32,
+        SettingItem::Offse => side.shift_dir_offset().1 as i32,
         SettingItem::AutoLk => app.settings.key_auto_lock as i32,
         SettingItem::Vox => app.settings.vox_switch as i32,
         SettingItem::VoxLv => app.settings.vox_level as i32,
@@ -187,11 +187,33 @@ pub(super) fn apply(app: &mut App, syst: &mut SYST, item: SettingItem, v: i32) {
             app.radio.set_scramble_level(syst, v as u8);
         }
         SettingItem::Sftd => {
-            app.sides[app.master].freq_dir = v as u8;
+            let s = &mut app.sides[app.master];
+            match s.vfo_chan {
+                ChVfoMode::Vfo => s.freq_dir = v as u8,
+                ChVfoMode::Channel => {
+                    let (_, offset) = s.shift_dir_offset();
+                    s.tx_freq_hz = match v {
+                        1 => s.rx_freq_hz.saturating_add(offset),
+                        2 => s.rx_freq_hz.saturating_sub(offset),
+                        _ => s.rx_freq_hz,
+                    };
+                }
+            }
             app.commit_side_change(syst);
         }
         SettingItem::Offse => {
-            app.sides[app.master].offset_hz = v as u32;
+            let s = &mut app.sides[app.master];
+            match s.vfo_chan {
+                ChVfoMode::Vfo => s.offset_hz = v as u32,
+                ChVfoMode::Channel => {
+                    let (dir, _) = s.shift_dir_offset();
+                    s.tx_freq_hz = match dir {
+                        1 => s.rx_freq_hz.saturating_add(v as u32),
+                        2 => s.rx_freq_hz.saturating_sub(v as u32),
+                        _ => s.rx_freq_hz,
+                    };
+                }
+            }
             app.commit_side_change(syst);
         }
         SettingItem::AutoLk => {

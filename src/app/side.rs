@@ -111,4 +111,19 @@ impl Side {
     pub fn step_deci_hz(&self) -> u32 {
         super::STEP_LIST_DECI_HZ[self.freq_step as usize]
     }
+
+    pub fn shift_dir_offset(&self) -> (u8, u32) {
+        match self.vfo_chan {
+            ChVfoMode::Vfo => (self.freq_dir, self.offset_hz),
+            ChVfoMode::Channel => {
+                if self.tx_freq_hz == self.rx_freq_hz {
+                    (0, 0)
+                } else if self.tx_freq_hz > self.rx_freq_hz {
+                    (1, self.tx_freq_hz - self.rx_freq_hz)
+                } else {
+                    (2, self.rx_freq_hz - self.tx_freq_hz)
+                }
+            }
+        }
+    }
 }
