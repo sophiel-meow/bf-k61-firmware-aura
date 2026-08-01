@@ -49,6 +49,7 @@ pub mod addr {
 
     pub const BOOT_TEXT_ADDR: u32 = 0x9100;
     pub const BOOT_TUNE_ADDR: u32 = 0x9200;
+    pub const BATTERY_CAL_ADDR: u32 = 0x9300;
 }
 
 /// Raw byte size of the boot-logo bitmap at `addr::BOOT_LOGO_ADDR`: 8 pages
@@ -540,7 +541,7 @@ impl Settings {
         boot_text_line1: [0; 16],
         boot_text_line2: [0; 16],
         boot_tune: [(0, 0); 48],
-        battery_cal_raw: 2048,
+        battery_cal_raw: 2731,
     };
 
     pub fn from_bytes(buf: &[u8; 160]) -> Settings {

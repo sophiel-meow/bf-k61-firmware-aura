@@ -121,11 +121,8 @@ fn handle_read(app: &mut App, dbg: &mut DebugUart, wire_addr: u16) {
             .storage_mut()
             .load_settings()
             .unwrap_or(flash_map::Settings::DEFAULT);
-        // The CPS wire protocol only knows the original 19-byte settings
-        // block; the trailing programmable-key bytes are this rewrite's own
-        // addition and have no home on the wire, so only the prefix is sent.
-        buf[..19].copy_from_slice(&settings.to_bytes()[..19]);
-        Some(19)
+        buf[..28].copy_from_slice(&settings.to_bytes()[..28]);
+        Some(28)
     } else if logical == addr::FM_ADDR {
         let channels = app
             .storage_mut()
@@ -156,6 +153,13 @@ fn handle_read(app: &mut App, dbg: &mut DebugUart, wire_addr: u16) {
             buf[i * 2 + 1] = duration;
         }
         Some(settings.boot_tune.len() * 2)
+    } else if logical == addr::BATTERY_CAL_ADDR {
+        let settings = app
+            .storage_mut()
+            .load_settings()
+            .unwrap_or(flash_map::Settings::DEFAULT);
+        buf[..2].copy_from_slice(&settings.battery_cal_raw.to_le_bytes());
+        Some(2)
     } else {
         None
     };
@@ -185,17 +189,13 @@ fn handle_write(app: &mut App, dbg: &mut DebugUart, wire_addr: u16, data: &[u8])
         let raw: [u8; 64] = data.try_into().unwrap();
         app.storage_mut().save_vfo_raw(&raw);
         true
-    } else if logical == addr::RADIO_IMFOS_ADDR && data.len() == 19 {
-        // Merge onto the currently-stored settings rather than a fresh
-        // all-zero record, so a CPS write (which only ever sends the
-        // original 19-byte block) can't silently wipe the trailing
-        // programmable-key bytes it has no knowledge of.
+    } else if logical == addr::RADIO_IMFOS_ADDR && data.len() == 28 {
         let current = app
             .storage_mut()
             .load_settings()
             .unwrap_or(flash_map::Settings::DEFAULT);
         let mut raw = current.to_bytes();
-        raw[..19].copy_from_slice(data);
+        raw[..28].copy_from_slice(data);
         app.storage_mut()
             .save_settings(&flash_map::Settings::from_bytes(&raw));
         true
@@ -211,7 +211,7 @@ fn handle_write(app: &mut App, dbg: &mut DebugUart, wire_addr: u16, data: &[u8])
             .storage_mut()
             .load_settings()
             .unwrap_or(flash_map::Settings::DEFAULT);
-        settings.boot_display_mode = data[0].min(4);
+        settings.boot_display_mode = data[0].min(3);
         settings.boot_sound_enabled = data[1] != 0;
         settings.boot_text_line1.copy_from_slice(&data[2..18]);
         settings.boot_text_line2.copy_from_slice(&data[18..34]);
@@ -225,6 +225,14 @@ fn handle_write(app: &mut App, dbg: &mut DebugUart, wire_addr: u16, data: &[u8])
         for (i, pair) in settings.boot_tune.iter_mut().enumerate() {
             *pair = (data[i * 2], data[i * 2 + 1]);
         }
+        app.storage_mut().save_settings(&settings);
+        true
+    } else if logical == addr::BATTERY_CAL_ADDR && data.len() == 2 {
+        let mut settings = app
+            .storage_mut()
+            .load_settings()
+            .unwrap_or(flash_map::Settings::DEFAULT);
+        settings.battery_cal_raw = u16::from_le_bytes([data[0], data[1]]);
         app.storage_mut().save_settings(&settings);
         true
     } else {
