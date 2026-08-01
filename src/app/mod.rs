@@ -20,7 +20,7 @@ use crate::device::storage::Storage;
 use crate::flash_map::{self, addr};
 use cortex_m::peripheral::SYST;
 
-const FIRMWARE_VERSION: &str = env!("CARGO_PKG_VERSION");
+const FIRMWARE_VERSION: &str = env!("GIT_VERSION");
 
 const STEP_LIST_DECI_HZ: [u32; 9] = [250, 500, 625, 1000, 1250, 2000, 2500, 5000, 10000];
 const DEFAULT_STEP_INDEX: u8 = 3;
@@ -46,6 +46,12 @@ const BACKLIGHT_STEP_TICKS: u16 = 500;
 
 /// TODO: calibrate per band
 const RSSI_DBM_BASE: i16 = 160 - 6;
+
+/// Fixed reference point for `App::battery_voltage_cv`'s linear calibration
+/// (hundredths of a volt): `battery_cal_raw` is the raw ADC reading that's
+/// supposed to correspond to exactly this voltage, tuned in the field
+/// against a multimeter.
+pub const BATTERY_CAL_REFERENCE_CV: u16 = 760;
 
 const VOX_THRESHOLD_TABLE: [u8; 11] = [127, 52, 62, 72, 84, 95, 106, 117, 125, 132, 140];
 const VOX_TX_HYSTERESIS: u8 = 8;
@@ -363,6 +369,10 @@ struct SettingsUi {
     snapshot: i32,
     info_page: u8,
     offset_input: DigitInput<7>,
+    /// Digit entry for BATCAL: user types the multimeter-measured battery
+    /// voltage (1 integer digit + 2 decimals, e.g. "742" = 7.42V) instead of
+    /// adjusting the raw ADC calibration value directly with Up/Down.
+    battery_input: DigitInput<3>,
 }
 
 impl SettingsUi {
@@ -373,6 +383,7 @@ impl SettingsUi {
             snapshot: 0,
             info_page: 0,
             offset_input: DigitInput::new(),
+            battery_input: DigitInput::new(),
         }
     }
 
@@ -427,6 +438,10 @@ pub struct App {
 
     battery_cal: [u8; 7],
     battery_bars: u8,
+    /// Latest raw 12-bit battery-ADC sample, refreshed by `poll_battery`.
+    /// Kept separately from `battery_bars` (which uses the factory 8-bit
+    /// threshold table) since `battery_voltage_cv` needs full precision.
+    battery_raw12: u16,
 
     rssi_raw: u8,
     mic_level: u8,
@@ -560,6 +575,7 @@ impl App {
             dtmf_dial: None,
             battery_cal,
             battery_bars: 4,
+            battery_raw12: 0,
             rssi_raw: 0,
             mic_level: 0,
             channel_display_mode: channel_display_mode_from_u8(settings.channel_display_mode),
@@ -975,7 +991,9 @@ impl App {
 
     // battery
     pub fn poll_battery(&mut self) {
-        let raw = (self.radio.read_battery_raw() >> 4) as u8;
+        let raw12 = self.radio.read_battery_raw();
+        self.battery_raw12 = raw12;
+        let raw = (raw12 >> 4) as u8;
         let t = &self.battery_cal;
         self.battery_bars = if raw > t[5] {
             4
@@ -992,6 +1010,17 @@ impl App {
 
     pub fn battery_bars(&self) -> u8 {
         self.battery_bars
+    }
+
+    /// Battery voltage in hundredths of a volt, derived from the latest
+    /// raw ADC sample and the field-tuned `battery_cal_raw` calibration point
+    pub fn battery_voltage_cv(&self) -> u16 {
+        (self.battery_raw12 as u32 * BATTERY_CAL_REFERENCE_CV as u32
+            / self.settings.battery_cal_raw.max(1) as u32) as u16
+    }
+
+    pub fn settings(&self) -> &flash_map::Settings {
+        &self.settings
     }
 
     pub fn set_rssi_raw(&mut self, val: u8) {

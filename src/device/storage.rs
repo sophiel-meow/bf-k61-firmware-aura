@@ -7,7 +7,7 @@ use crate::hal::wear_leveled::WearLeveledRegion;
 const VFO_REGION: WearLeveledRegion<64> = WearLeveledRegion::new(addr::VFO_INFO_ADDR, 16);
 
 /// Global settings record.
-const SETTINGS_REGION: WearLeveledRegion<28> = WearLeveledRegion::new(addr::RADIO_IMFOS_ADDR, 16);
+const SETTINGS_REGION: WearLeveledRegion<160> = WearLeveledRegion::new(addr::RADIO_IMFOS_ADDR, 16);
 
 /// FM broadcast channel list: 30 slots x u16 (little-endian deci-MHz).
 const FM_PAYLOAD_LEN: usize = flash_map::FM_CHANNEL_COUNT * 2;
@@ -39,6 +39,25 @@ impl Storage {
 
     pub fn save_settings(&mut self, settings: &flash_map::Settings) {
         SETTINGS_REGION.save(&mut self.norflash, &settings.to_bytes());
+    }
+
+    pub fn read_boot_logo(&mut self) -> [u8; flash_map::BOOT_LOGO_SIZE] {
+        let mut buf = [0u8; flash_map::BOOT_LOGO_SIZE];
+        self.norflash.read_bytes(addr::BOOT_LOGO_ADDR, &mut buf);
+        buf
+    }
+
+    pub fn read_boot_logo_chunk(&mut self, offset: u32, buf: &mut [u8]) {
+        self.norflash.read_bytes(addr::BOOT_LOGO_ADDR + offset, buf);
+    }
+
+    pub fn erase_boot_logo(&mut self) {
+        self.norflash.erase_sector(addr::BOOT_LOGO_ADDR);
+    }
+
+    pub fn write_boot_logo_chunk(&mut self, offset: u32, data: &[u8]) {
+        self.norflash
+            .write_bytes(addr::BOOT_LOGO_ADDR + offset, data);
     }
 
     // VFO

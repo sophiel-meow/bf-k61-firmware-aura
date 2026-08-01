@@ -44,7 +44,17 @@ pub mod addr {
     pub const BAND_ADDR: u32 = 0xF230;
     pub const BAND2_ADDR: u32 = 0xF240;
     pub const MODEL_ADDR: u32 = 0xF250;
+
+    pub const BOOT_LOGO_ADDR: u32 = 0x000C_0000;
+
+    pub const BOOT_TEXT_ADDR: u32 = 0x9100;
+    pub const BOOT_TUNE_ADDR: u32 = 0x9200;
 }
+
+/// Raw byte size of the boot-logo bitmap at `addr::BOOT_LOGO_ADDR`: 8 pages
+/// x 128 columns x 1 byte/column, the ST7565 controller's native page
+/// format (bit0 = top row of the page).
+pub const BOOT_LOGO_SIZE: usize = 1024;
 
 /// Both on-flash frequency encodings share the same logical unit: whole
 /// decimal digits of deci-Hz (frequency in Hz, divided by 10). Channel
@@ -472,6 +482,27 @@ pub struct Settings {
     /// `voxDelay`: 0-15, steps of 0.1s over 0.5-2.0s. How long VOX keeps
     /// PTT keyed after mic level drops back below threshold.
     pub vox_delay: u8,
+    /// Boot-screen content, 0-3: 0 = none (skip straight to standby; also
+    /// forces `boot_sound_enabled` off, see `app::settings_ops::apply`),
+    /// 1 = battery voltage (`app::App::battery_voltage_cv`), 2 = custom text
+    /// (`boot_text_line1`/`2`), 3 = stored logo bitmap
+    /// (`addr::BOOT_LOGO_ADDR`).
+    pub boot_display_mode: u8,
+    /// Play `boot_tune` through the tone oscillator during boot. Forced to
+    /// `false` whenever `boot_display_mode` is set to 0 (None).
+    pub boot_sound_enabled: bool,
+    /// Two 16-character ASCII lines shown in boot display modes 1/3,
+    /// CPS-editable. A 0x00 or 0xFF byte terminates a line early.
+    pub boot_text_line1: [u8; 16],
+    pub boot_text_line2: [u8; 16],
+    /// OpenGD77-compatible boot melody: 48 `(tone_index, duration)` pairs.
+    /// `tone_index` 0 = rest, 1..=45 indexes the standard chromatic scale
+    /// (`device::radio::BOOT_TUNE_HZ_DIV_10`); `duration` is in units of
+    /// 30ms. A `(0, 0)` pair before the 48th slot ends the tune early.
+    pub boot_tune: [(u8, u8); 48],
+    /// Raw 12-bit ADC calibration point for `app::App::battery_voltage_cv`:
+    /// the battery-ADC raw reading
+    pub battery_cal_raw: u16,
 }
 
 impl Settings {
@@ -503,10 +534,25 @@ impl Settings {
         band_long: 0,   // None
         ani_tx: false,
         rptrl: 0,
-        vox_delay: 5, // 1.0s, matching the previous hardcoded hang time
+        vox_delay: 5,         // 1.0s, matching the previous hardcoded hang time
+        boot_display_mode: 3, // Logo (previous default was "show the OEM logo")
+        boot_sound_enabled: false,
+        boot_text_line1: [0; 16],
+        boot_text_line2: [0; 16],
+        boot_tune: [(0, 0); 48],
+        battery_cal_raw: 2048,
     };
 
-    pub fn from_bytes(buf: &[u8; 28]) -> Settings {
+    pub fn from_bytes(buf: &[u8; 160]) -> Settings {
+        let mut boot_text_line1 = [0u8; 16];
+        boot_text_line1.copy_from_slice(&buf[30..46]);
+        let mut boot_text_line2 = [0u8; 16];
+        boot_text_line2.copy_from_slice(&buf[46..62]);
+        let mut boot_tune = [(0u8, 0u8); 48];
+        for (i, pair) in boot_tune.iter_mut().enumerate() {
+            *pair = (buf[62 + i * 2], buf[62 + i * 2 + 1]);
+        }
+
         Settings {
             sql_level: buf[0],
             tail_elimination: buf[1] != 0,
@@ -536,40 +582,55 @@ impl Settings {
             ani_tx: buf[25] != 0,
             rptrl: buf[26].min(10),
             vox_delay: buf[27].min(15),
+            boot_display_mode: buf[28].min(3),
+            boot_sound_enabled: buf[29] != 0,
+            boot_text_line1,
+            boot_text_line2,
+            boot_tune,
+            battery_cal_raw: u16::from_le_bytes([buf[158], buf[159]]),
         }
     }
 
-    pub fn to_bytes(&self) -> [u8; 28] {
-        [
-            self.sql_level,
-            self.tail_elimination as u8,
-            self.busy_lock as u8,
-            self.tx_forbid as u8,
-            self.key_auto_lock,
-            self.dual_standby as u8,
-            self.vox_switch as u8,
-            self.vox_level,
-            self.tot_level,
-            self.beeps_switch as u8,
-            self.roger_tone,
-            self.scramble_level,
-            self.contrast,
-            self.rtone,
-            self.scan_mode,
-            self.rit_offset as u8,
-            self.save_level,
-            self.backlight_time,
-            self.channel_display_mode,
-            self.side1_short,
-            self.side1_long,
-            self.side2_short,
-            self.side2_long,
-            self.band_short,
-            self.band_long,
-            self.ani_tx as u8,
-            self.rptrl,
-            self.vox_delay,
-        ]
+    pub fn to_bytes(&self) -> [u8; 160] {
+        let mut buf = [0u8; 160];
+        buf[0] = self.sql_level;
+        buf[1] = self.tail_elimination as u8;
+        buf[2] = self.busy_lock as u8;
+        buf[3] = self.tx_forbid as u8;
+        buf[4] = self.key_auto_lock;
+        buf[5] = self.dual_standby as u8;
+        buf[6] = self.vox_switch as u8;
+        buf[7] = self.vox_level;
+        buf[8] = self.tot_level;
+        buf[9] = self.beeps_switch as u8;
+        buf[10] = self.roger_tone;
+        buf[11] = self.scramble_level;
+        buf[12] = self.contrast;
+        buf[13] = self.rtone;
+        buf[14] = self.scan_mode;
+        buf[15] = self.rit_offset as u8;
+        buf[16] = self.save_level;
+        buf[17] = self.backlight_time;
+        buf[18] = self.channel_display_mode;
+        buf[19] = self.side1_short;
+        buf[20] = self.side1_long;
+        buf[21] = self.side2_short;
+        buf[22] = self.side2_long;
+        buf[23] = self.band_short;
+        buf[24] = self.band_long;
+        buf[25] = self.ani_tx as u8;
+        buf[26] = self.rptrl;
+        buf[27] = self.vox_delay;
+        buf[28] = self.boot_display_mode;
+        buf[29] = self.boot_sound_enabled as u8;
+        buf[30..46].copy_from_slice(&self.boot_text_line1);
+        buf[46..62].copy_from_slice(&self.boot_text_line2);
+        for (i, &(tone, duration)) in self.boot_tune.iter().enumerate() {
+            buf[62 + i * 2] = tone;
+            buf[62 + i * 2 + 1] = duration;
+        }
+        buf[158..160].copy_from_slice(&self.battery_cal_raw.to_le_bytes());
+        buf
     }
 
     /// TOT in seconds; 0 = disabled.

@@ -10,10 +10,25 @@ pub use crate::drivers::fd6818::{Modulation, Power, RawTone, SubAudio};
 /// cutting the carrier.
 const SEND_TAIL_HOLD_MS: u32 = 300;
 
-/// UI key-beep default tone sequence: 1500Hz/80ms then 450Hz/35ms
-const BEEP_TONES: [(u16, u32); 2] = [(150, 80), (45, 35)];
-/// Roger-beep tone pair: 1000Hz then 850Hz, 80ms each
+/// 1000Hz/60ms
+const BEEP_TONES: [(u16, u32); 1] = [(100, 60)];
+/// 1000Hz/80ms, 850Hz/80ms
 const ROGER_TONES: [(u16, u32); 2] = [(100, 80), (85, 80)];
+
+const TONE_SETTLE_MS: u32 = 2;
+
+/// OpenGD77-style Boot-tune note table: standard 12-tone equal temperament,
+/// A2=110Hz, values in `hz_div_10`
+/// index 0 is `tone_index` 1 (A2), so a boot- tune pair looks up
+/// `BOOT_TUNE_HZ_DIV_10[tone_index - 1]`.
+pub const BOOT_TUNE_HZ_DIV_10: [u16; 45] = [
+    11, 12, 12, 13, 14, 15, 16, 16, 17, 19, 20, 21, 22, 23, 25, 26, 28, 29, 31, 33, 35, 37, 39, 42,
+    44, 47, 49, 52, 55, 59, 62, 66, 70, 74, 78, 83, 88, 93, 99, 105, 111, 117, 124, 132, 140,
+];
+
+/// One period unit in an OpenGD77-style boot-tune `(tone_index, duration)`
+/// pair.
+const BOOT_TUNE_PERIOD_MS: u32 = 30;
 
 /// `txOffTone`: what plays right after PTT release, before the tail
 /// elimination tone (if any) and the return to RX.
@@ -465,13 +480,73 @@ impl Radio {
         if !self.beeps_enabled || self.audio_open {
             return;
         }
-        board::set_speaker_switch(self.gpiob, true);
-        self.play_tone_sequence(syst, &BEEP_TONES, false);
-        board::set_speaker_switch(self.gpiob, self.audio_open);
+        self.play_tone_sequence(syst, &BEEP_TONES, false, true);
     }
 
     fn play_roger_tone(&mut self, syst: &mut SYST) {
-        self.play_tone_sequence(syst, &ROGER_TONES, true);
+        self.play_tone_sequence(syst, &ROGER_TONES, true, false);
+    }
+
+    /// Plays a boot-tune melody: `(tone_index, duration)` pairs,
+    /// `tone_index` 0 = rest (silence for `duration` periods), 1..=45
+    /// indexes `BOOT_TUNE_HZ_DIV_10`. A `(0, 0)` pair ends the tune early,
+    /// and so does any `tone_index` outside `0..=45` -- there's no valid
+    /// reason for one to appear in real data, so it's treated as erased
+    /// flash (`0xFF`) or otherwise foreign/corrupt bytes rather than
+    /// silently burning `duration` periods of silence per stray entry
+    /// (up to 47 * 255 * 30ms = ~6 minutes if the whole tail is `0xFF`).
+    ///
+    /// A rest re-arms `tx_single_tone_on` at 0Hz rather than calling
+    /// `tx_single_tone_off` mid-tune: that function's `key_tx = false`
+    /// branch calls `rx_on()`, which switches `REG_STATE` to the full
+    /// `STATE_RX_ON` (RX front-end live) -- exactly what caused a burst of
+    /// static on every rest before this fix. `tx_single_tone_off` is only
+    /// called once, after the whole loop, same as `play_tone_sequence`
+    /// does for a plain UI beep (which never audibly hisses): the RX front
+    /// end stays off (`REG_STATE = STATE_TONE`) for the tune's entire
+    /// duration, not toggled live and back for every pause in it.
+    /// Sidetone only (never keys the transmitter) -- called once at boot,
+    /// before the radio has entered RX.
+    pub fn play_boot_tune(&mut self, syst: &mut SYST, tune: &[(u8, u8); 48]) {
+        let mut speaker_connected = false;
+
+        for &(tone_index, duration) in tune {
+            if tone_index == 0 && duration == 0 {
+                break;
+            }
+            let hz_div_10 = if tone_index == 0 {
+                0 // rest
+            } else {
+                match BOOT_TUNE_HZ_DIV_10.get((tone_index - 1) as usize) {
+                    Some(&hz) => hz,
+                    None => break,
+                }
+            };
+            self.fd6818.tx_single_tone_on(syst, hz_div_10, false);
+            if !speaker_connected {
+                // See `play_tone_sequence`'s doc comment: connect the
+                // speaker only after the tone is already configured, not
+                // before.
+                delay::ms(syst, TONE_SETTLE_MS);
+                board::set_speaker_switch(self.gpiob, true);
+                speaker_connected = true;
+            }
+            delay::ms(syst, duration as u32 * BOOT_TUNE_PERIOD_MS);
+        }
+        // See `play_tone_sequence`'s doc comment for why the speaker is
+        // physically disconnected here, before `tx_single_tone_off`.
+        board::set_speaker_switch(self.gpiob, false);
+        self.fd6818.tx_single_tone_off(syst, false);
+
+        let state = if self.audio_open {
+            AfOutState::RxAudio
+        } else {
+            AfOutState::Mute
+        };
+        self.fd6818
+            .set_af_out(syst, state, self.cfg.wide_band, self.cfg.modulation);
+        self.fd6818.set_scramble(syst, self.scramble_level);
+        board::set_speaker_switch(self.gpiob, self.audio_open);
     }
 
     fn play_mdc1200_tone(&mut self, syst: &mut SYST) {
@@ -480,10 +555,25 @@ impl Radio {
         self.fd6818.exit_mdc1200_mode(syst);
     }
 
-    fn play_tone_sequence(&mut self, syst: &mut SYST, tones: &[(u16, u32)], key_tx: bool) {
+    fn play_tone_sequence(
+        &mut self,
+        syst: &mut SYST,
+        tones: &[(u16, u32)],
+        key_tx: bool,
+        local_speaker: bool,
+    ) {
+        let mut speaker_connected = false;
         for &(hz_div_10, duration_ms) in tones {
             self.fd6818.tx_single_tone_on(syst, hz_div_10, key_tx);
+            if local_speaker && !speaker_connected {
+                delay::ms(syst, TONE_SETTLE_MS);
+                board::set_speaker_switch(self.gpiob, true);
+                speaker_connected = true;
+            }
             delay::ms(syst, duration_ms);
+        }
+        if local_speaker {
+            board::set_speaker_switch(self.gpiob, false);
         }
         self.fd6818.tx_single_tone_off(syst, key_tx);
 
@@ -495,6 +585,9 @@ impl Radio {
         self.fd6818
             .set_af_out(syst, state, self.cfg.wide_band, self.cfg.modulation);
         self.fd6818.set_scramble(syst, self.scramble_level);
+        if local_speaker {
+            board::set_speaker_switch(self.gpiob, self.audio_open);
+        }
     }
 
     pub fn rtone_on(&mut self, syst: &mut SYST, hz_div_10: u16) {

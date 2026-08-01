@@ -6,8 +6,8 @@ use super::launcher::{LauncherEntry, LAUNCHER_ITEMS};
 use super::settings;
 use super::settings_ops;
 use super::{
-    digit_value, App, ChVfoMode, DigitInput, Mode, CHANNEL_INPUT_DIGITS, DUAL_STANDBY_HOLD_TICKS,
-    RTONE_HZ_DIV_10, VFO_INPUT_DIGITS, VOX_HOLD_AFTER_KEY_TICKS,
+    digit_value, App, ChVfoMode, DigitInput, Mode, BATTERY_CAL_REFERENCE_CV, CHANNEL_INPUT_DIGITS,
+    DUAL_STANDBY_HOLD_TICKS, RTONE_HZ_DIV_10, VFO_INPUT_DIGITS, VOX_HOLD_AFTER_KEY_TICKS,
 };
 use super::{scan, scanqt, search};
 use crate::device::keypad::{KeyEvent, KeyEventKind, KeyId};
@@ -230,6 +230,10 @@ fn dispatch_settings(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
         dispatch_offset_input(app, syst, ev);
         return;
     }
+    if app.settings_ui.editing && item == settings::SettingItem::BattCal {
+        dispatch_battery_input(app, syst, ev);
+        return;
+    }
 
     match ev.kind {
         KeyEventKind::Single | KeyEventKind::Repeat => match ev.key {
@@ -255,6 +259,8 @@ fn dispatch_settings(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
                     }
                     if item == settings::SettingItem::Offse {
                         app.settings_ui.offset_input.clear();
+                    } else if item == settings::SettingItem::BattCal {
+                        app.settings_ui.battery_input.clear();
                     } else {
                         app.settings_ui.snapshot = settings_ops::current_value(app, item);
                     }
@@ -308,5 +314,42 @@ fn commit_offset_input(app: &mut App, syst: &mut SYST) {
         settings_ops::apply(app, syst, settings::SettingItem::Offse, hz as i32);
     }
     app.settings_ui.offset_input.clear();
+    app.settings_ui.editing = false;
+}
+
+fn dispatch_battery_input(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
+    if ev.kind != KeyEventKind::Single {
+        return;
+    }
+    if let Some(digit) = digit_value(ev.key) {
+        app.settings_ui.battery_input.push(digit);
+        if app.settings_ui.battery_input.is_full() {
+            commit_battery_input(app, syst);
+        }
+        return;
+    }
+    match ev.key {
+        KeyId::Menu => commit_battery_input(app, syst),
+        KeyId::Exit if app.settings_ui.battery_input.is_empty() => {
+            app.settings_ui.editing = false;
+        }
+        KeyId::Exit => app.settings_ui.battery_input.backspace(),
+        _ => {}
+    }
+}
+
+/// Solves the calibration equation for the raw ADC value
+fn commit_battery_input(app: &mut App, syst: &mut SYST) {
+    let entered_cv = app.settings_ui.battery_input.value();
+    let raw12 = app.battery_raw12 as u32;
+    if let Some(new_cal) = (raw12 * BATTERY_CAL_REFERENCE_CV as u32).checked_div(entered_cv) {
+        settings_ops::apply(
+            app,
+            syst,
+            settings::SettingItem::BattCal,
+            new_cal.clamp(1, u16::MAX as u32) as i32,
+        );
+    }
+    app.settings_ui.battery_input.clear();
     app.settings_ui.editing = false;
 }

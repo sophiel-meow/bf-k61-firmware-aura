@@ -182,6 +182,32 @@ fn main() -> ! {
         &mut cp.SYST,
     );
 
+    app.poll_battery();
+    let boot_mode = app.settings().boot_display_mode;
+    match boot_mode {
+        1 => {
+            ui::boot::draw_voltage(display.as_draw_target(), app.battery_voltage_cv());
+            display.flush();
+        }
+        2 => {
+            ui::boot::draw_message(display.as_draw_target(), app.settings());
+            display.flush();
+        }
+        3 => {
+            let logo = app.storage_mut().read_boot_logo();
+            ui::boot::draw_logo(display.as_draw_target(), &logo);
+            display.flush();
+        }
+        _ => {}
+    }
+    if boot_mode != 0 && app.settings().boot_sound_enabled {
+        let tune = app.settings().boot_tune;
+        app.radio_mut().play_boot_tune(&mut cp.SYST, &tune);
+    }
+    if boot_mode != 0 {
+        delay::ms(&mut cp.SYST, 1000);
+    }
+
     app.radio_mut().enter_rx(&mut cp.SYST);
 
     writeln!(

@@ -68,6 +68,9 @@ pub(super) fn current_value(app: &App, item: SettingItem) -> i32 {
         SettingItem::Side2Long => app.settings.side2_long as i32,
         SettingItem::BandShort => app.settings.band_short as i32,
         SettingItem::BandLong => app.settings.band_long as i32,
+        SettingItem::BootMode => app.settings.boot_display_mode as i32,
+        SettingItem::BootSnd => app.settings.boot_sound_enabled as i32,
+        SettingItem::BattCal => app.settings.battery_cal_raw as i32,
         SettingItem::Info => app.settings_ui.info_page as i32,
         _ => 0,
     }
@@ -88,8 +91,19 @@ pub(super) fn adjust(app: &mut App, syst: &mut SYST, item: SettingItem, up: bool
         | SettingItem::Wn
         | SettingItem::Tail
         | SettingItem::AniTx => 1 - cur,
+        // Locked to OFF while BootMode is None (0): boot sound has no
+        // effect there and the item is meant to read as disabled, so
+        // Up/Down are a no-op instead of toggling a value nobody can hear.
+        SettingItem::BootSnd => {
+            if app.settings.boot_display_mode == 0 {
+                cur
+            } else {
+                1 - cur
+            }
+        }
         SettingItem::VoxDly => clamp_step(cur, up, 0, 15),
         SettingItem::Rptrl => clamp_step(cur, up, 0, 10),
+        SettingItem::BootMode => clamp_step(cur, up, 0, 3),
         SettingItem::AniCall => {
             clamp_step(cur, up, -1, crate::flash_map::addr::CONTACT_COUNT as i32 - 1)
         }
@@ -215,6 +229,14 @@ pub(super) fn apply(app: &mut App, syst: &mut SYST, item: SettingItem, v: i32) {
         SettingItem::Side2Long => app.settings.side2_long = v as u8,
         SettingItem::BandShort => app.settings.band_short = v as u8,
         SettingItem::BandLong => app.settings.band_long = v as u8,
+        SettingItem::BootMode => {
+            app.settings.boot_display_mode = v as u8;
+            if v == 0 {
+                app.settings.boot_sound_enabled = false;
+            }
+        }
+        SettingItem::BootSnd => app.settings.boot_sound_enabled = v != 0,
+        SettingItem::BattCal => app.settings.battery_cal_raw = v as u16,
         SettingItem::Rit => {
             app.settings.rit_offset = v as i8;
             app.radio.set_rit_offset(v * RIT_STEP_HZ);
@@ -254,7 +276,8 @@ pub fn value_text_for(app: &App, index: usize, item: SettingItem, w: &mut dyn Wr
         | SettingItem::BusyLock
         | SettingItem::TxForbid
         | SettingItem::Beep
-        | SettingItem::Tail => {
+        | SettingItem::Tail
+        | SettingItem::BootSnd => {
             let _ = write!(
                 w,
                 "{}",
@@ -264,6 +287,26 @@ pub fn value_text_for(app: &App, index: usize, item: SettingItem, w: &mut dyn Wr
                     "OFF"
                 }
             );
+        }
+        SettingItem::BootMode => {
+            let _ = write!(
+                w,
+                "{}",
+                match current_value(app, item) {
+                    1 => "VOLT",
+                    2 => "MSG",
+                    3 => "LOGO",
+                    _ => "NONE",
+                }
+            );
+        }
+        SettingItem::BattCal => {
+            if app.settings_ui.is_editing(index) {
+                app.settings_ui.battery_input.write_display(1, w);
+            } else {
+                let cv = app.battery_voltage_cv();
+                let _ = write!(w, "{}.{:02}V", cv / 100, cv % 100);
+            }
         }
         SettingItem::VoxDly => {
             let deci_s = 5 + current_value(app, item);

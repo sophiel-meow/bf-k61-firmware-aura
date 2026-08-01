@@ -11,14 +11,17 @@ pub const CMD_END: u8 = 0x45; // 'E'
 /// since it addresses internal MCU program flash than every other
 /// command here (the external SPI NOR flash `Storage` wraps).
 pub const CMD_READ_BOOT: u8 = 0x42; // 'B'
+
+pub const CMD_READ_LOGO: u8 = 0x4C; // 'L'
+pub const CMD_WRITE_LOGO: u8 = 0x6C; // 'l'
+
 pub const CMD_ERROR: u8 = 0xEE;
 
 pub const ERR_BAD_CRC: u8 = 0x01;
 pub const ERR_BAD_ADDR: u8 = 0x02;
 pub const ERR_BAD_LEN: u8 = 0x03;
 
-/// Largest single-record payload we ever move (the 64B VFO A+B block).
-pub const MAX_DATA: usize = 64;
+pub const MAX_DATA: usize = 96;
 
 pub struct Frame {
     pub cmd: u8,

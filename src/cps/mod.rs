@@ -89,6 +89,10 @@ pub fn run_session<DI: WriteOnlyDataCommand>(
             frame::CMD_READ => handle_read(app, dbg, frame.addr),
             frame::CMD_WRITE => handle_write(app, dbg, frame.addr, &frame.data[..frame.len]),
             frame::CMD_READ_BOOT => handle_read_boot(dbg, frame.addr),
+            frame::CMD_READ_LOGO => handle_read_logo(app, dbg, frame.addr),
+            frame::CMD_WRITE_LOGO => {
+                handle_write_logo(app, dbg, frame.addr, &frame.data[..frame.len])
+            }
             frame::CMD_END => {
                 send_response(dbg, frame::CMD_END, frame.addr, &[]);
                 delay::ms(syst, 5); // let the ACK bytes drain out before reset
@@ -132,6 +136,26 @@ fn handle_read(app: &mut App, dbg: &mut DebugUart, wire_addr: u16) {
             chunk.copy_from_slice(&v.to_le_bytes());
         }
         Some(n)
+    } else if logical == addr::BOOT_TEXT_ADDR {
+        let settings = app
+            .storage_mut()
+            .load_settings()
+            .unwrap_or(flash_map::Settings::DEFAULT);
+        buf[0] = settings.boot_display_mode;
+        buf[1] = settings.boot_sound_enabled as u8;
+        buf[2..18].copy_from_slice(&settings.boot_text_line1);
+        buf[18..34].copy_from_slice(&settings.boot_text_line2);
+        Some(34)
+    } else if logical == addr::BOOT_TUNE_ADDR {
+        let settings = app
+            .storage_mut()
+            .load_settings()
+            .unwrap_or(flash_map::Settings::DEFAULT);
+        for (i, &(tone, duration)) in settings.boot_tune.iter().enumerate() {
+            buf[i * 2] = tone;
+            buf[i * 2 + 1] = duration;
+        }
+        Some(settings.boot_tune.len() * 2)
     } else {
         None
     };
@@ -182,6 +206,27 @@ fn handle_write(app: &mut App, dbg: &mut DebugUart, wire_addr: u16, data: &[u8])
         }
         app.storage_mut().save_fm_channels(&channels);
         true
+    } else if logical == addr::BOOT_TEXT_ADDR && data.len() == 34 {
+        let mut settings = app
+            .storage_mut()
+            .load_settings()
+            .unwrap_or(flash_map::Settings::DEFAULT);
+        settings.boot_display_mode = data[0].min(4);
+        settings.boot_sound_enabled = data[1] != 0;
+        settings.boot_text_line1.copy_from_slice(&data[2..18]);
+        settings.boot_text_line2.copy_from_slice(&data[18..34]);
+        app.storage_mut().save_settings(&settings);
+        true
+    } else if logical == addr::BOOT_TUNE_ADDR && data.len() == 96 {
+        let mut settings = app
+            .storage_mut()
+            .load_settings()
+            .unwrap_or(flash_map::Settings::DEFAULT);
+        for (i, pair) in settings.boot_tune.iter_mut().enumerate() {
+            *pair = (data[i * 2], data[i * 2 + 1]);
+        }
+        app.storage_mut().save_settings(&settings);
+        true
     } else {
         false
     };
@@ -207,6 +252,40 @@ fn write_channel(app: &mut App, logical: u32, data: &[u8]) -> bool {
 const BOOTLOADER_BASE: u32 = 0x0800_0000;
 const BOOTLOADER_LEN: u32 = 0x2000;
 const BOOTLOADER_CHUNK: u32 = 32;
+
+const BOOT_LOGO_CHUNK: u32 = 64;
+
+fn handle_read_logo(app: &mut App, dbg: &mut DebugUart, wire_addr: u16) {
+    let offset = wire_addr as u32;
+    if !offset.is_multiple_of(BOOT_LOGO_CHUNK)
+        || offset + BOOT_LOGO_CHUNK > flash_map::BOOT_LOGO_SIZE as u32
+    {
+        send_error(dbg, wire_addr, frame::ERR_BAD_ADDR);
+        return;
+    }
+    let mut buf = [0u8; BOOT_LOGO_CHUNK as usize];
+    app.storage_mut().read_boot_logo_chunk(offset, &mut buf);
+    send_response(dbg, frame::CMD_READ_LOGO, wire_addr, &buf);
+}
+
+/// Writing offset 0 erases the logo's whole sector first (see
+/// `Storage::erase_boot_logo`), so a host tool must always send chunks
+/// starting from offset 0 and in order for a given image.
+fn handle_write_logo(app: &mut App, dbg: &mut DebugUart, wire_addr: u16, data: &[u8]) {
+    let offset = wire_addr as u32;
+    let ok = offset.is_multiple_of(BOOT_LOGO_CHUNK)
+        && data.len() == BOOT_LOGO_CHUNK as usize
+        && offset + BOOT_LOGO_CHUNK <= flash_map::BOOT_LOGO_SIZE as u32;
+    if !ok {
+        send_error(dbg, wire_addr, frame::ERR_BAD_ADDR);
+        return;
+    }
+    if offset == 0 {
+        app.storage_mut().erase_boot_logo();
+    }
+    app.storage_mut().write_boot_logo_chunk(offset, data);
+    send_response(dbg, frame::CMD_WRITE_LOGO, wire_addr, &[]);
+}
 
 fn handle_read_boot(dbg: &mut DebugUart, wire_addr: u16) {
     let offset = wire_addr as u32;

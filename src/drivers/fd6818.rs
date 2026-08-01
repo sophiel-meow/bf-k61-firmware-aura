@@ -418,6 +418,7 @@ pub struct Fd6818<'a> {
     dcs_mod_depth: u8,
     pa_target: u8,
     rx_match_bit: SubaudioMatchBit,
+    tone_active: bool,
 }
 
 impl<'a> Fd6818<'a> {
@@ -432,6 +433,7 @@ impl<'a> Fd6818<'a> {
             dcs_mod_depth: 0,
             pa_target: 100,
             rx_match_bit: SubaudioMatchBit::Ctcss,
+            tone_active: false,
         }
     }
 
@@ -540,12 +542,15 @@ impl<'a> Fd6818<'a> {
             REG_TONE_GAIN,
             (gain & TONE_GAIN_MASK) | TONE_GAIN_ON_BITS,
         );
-        self.write_reg(syst, REG_STATE, 0x0000);
+        if !self.tone_active {
+            self.write_reg(syst, REG_STATE, 0x0000);
+        }
         self.write_reg(
             syst,
             REG_STATE,
             if key_tx { STATE_TX_TONE } else { STATE_TONE },
         );
+        self.tone_active = true;
         // Beep volume is fixed regardless of modulation; irrelevant here.
         self.set_af_out(syst, AfOutState::Beep, true, Modulation::Fm);
 
@@ -560,6 +565,7 @@ impl<'a> Fd6818<'a> {
     pub fn tx_single_tone_off(&mut self, syst: &mut SYST, was_transmitting: bool) {
         self.write_reg(syst, REG_TONE_FREQ, 0);
         self.write_reg(syst, REG_TONE_GAIN, 0x0000);
+        self.tone_active = false;
         if was_transmitting {
             self.tx_on(syst);
         } else {

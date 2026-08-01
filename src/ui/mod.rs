@@ -1,3 +1,4 @@
+pub mod boot;
 mod chanmgr;
 mod contacts;
 pub mod cps;
