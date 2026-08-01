@@ -538,6 +538,7 @@ fn dispatch_detail(app: &mut App, ev: KeyEvent, mut edit: ChannelEdit) {
                 match field {
                     Field::Save => {
                         app.storage_mut().write_channel_rmw(edit.num, &edit.working);
+                        app.refresh_channel_display(edit.num);
                         app.chanmgr.phase = Phase::List(rescan_list(app, Some(edit.num)));
                         return;
                     }
@@ -562,6 +563,7 @@ fn dispatch_detail(app: &mut App, ev: KeyEvent, mut edit: ChannelEdit) {
             } else if field == Field::Delete {
                 app.storage_mut()
                     .write_channel_rmw(edit.num, &flash_map::Channel::from_bytes(&[0xFF; 32]));
+                app.refresh_channel_display(edit.num);
                 app.chanmgr.phase = Phase::List(rescan_list(app, None));
                 return;
             } else {

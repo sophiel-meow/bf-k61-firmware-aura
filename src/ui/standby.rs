@@ -42,6 +42,8 @@ where
 
     if app.tx_prohibited() {
         draw_tx_prohibited_overlay(lcd);
+    } else if app.no_channels_notice() {
+        draw_no_channels_overlay(lcd);
     } else {
         draw_ani_overlay(lcd, app);
     }
@@ -58,6 +60,23 @@ where
     Text::new(
         "TX PROHIBITED",
         Point::new(25, 38),
+        MonoTextStyle::new(&FONT_6X10, BinaryColor::Off),
+    )
+    .draw(lcd)
+    .ok();
+}
+
+fn draw_no_channels_overlay<D>(lcd: &mut D)
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    Rectangle::new(Point::new(16, 28), Size::new(96, 14))
+        .into_styled(PrimitiveStyle::with_fill(BinaryColor::On))
+        .draw(lcd)
+        .ok();
+    Text::new(
+        "NO CHANNELS",
+        Point::new(31, 38),
         MonoTextStyle::new(&FONT_6X10, BinaryColor::Off),
     )
     .draw(lcd)

@@ -306,6 +306,7 @@ fn main() -> ! {
                 app.poll_squelch(&mut cp.SYST, 3);
                 app.poll_dual_standby(&mut cp.SYST, app.rssi_open());
                 app.poll_dtmf(&mut cp.SYST);
+                app.poll_no_channels_notice();
             }
             app.poll_power_save(&mut cp.SYST);
         }

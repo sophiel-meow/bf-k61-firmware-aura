@@ -38,6 +38,8 @@ const TICKS_PER_SECOND: u16 = 100;
 
 const ANI_DISPLAY_HOLD_TICKS: u16 = 500;
 
+const NO_CHANNELS_HOLD_TICKS: u16 = 200;
+
 const DTMF_DIAL_MAX_DIGITS: usize = 16;
 
 const POWER_SAVE_IDLE_TICKS: u16 = 1000;
@@ -428,6 +430,10 @@ pub struct App {
 
     ani_caller: Option<[u8; 3]>,
     ani_hold_ticks: u16,
+    /// Ticks remaining to show the "NO CHANNELS" overlay after a VFO/Channel
+
+    /// toggle finds nothing programmed. 0 = not showing.
+    no_channels_ticks: u16,
     /// Runtime "current call target" override:
     /// sticky across PTTs, set by picking a contact in the Contacts app or
     /// by a 3-digit manual DTMF dial, cleared whenever the active channel
@@ -605,6 +611,7 @@ impl App {
             rtone_self_keyed: false,
             ani_caller: None,
             ani_hold_ticks: 0,
+            no_channels_ticks: 0,
             ani_target_override: None,
             dtmf_dial: None,
             battery_cal,
@@ -782,6 +789,25 @@ impl App {
         self.ani_target_override = None;
     }
 
+    pub(super) fn refresh_channel_display(&mut self, num: u16) {
+        for i in 0..self.sides.len() {
+            let showing =
+                self.sides[i].vfo_chan == ChVfoMode::Channel && self.sides[i].channel_num == num;
+            if !showing {
+                continue;
+            }
+            if self.storage.is_channel_empty(num) {
+                if let Some(next) = self.find_programmed_channel(num, true) {
+                    let ch = self.storage.read_channel(next);
+                    self.sides[i].load_channel(next, &ch);
+                }
+            } else {
+                let ch = self.storage.read_channel(num);
+                self.sides[i].load_channel(num, &ch);
+            }
+        }
+    }
+
     // radio sync
     /// Pushes `sides[watching]`'s config into `Radio`'s cache without
     /// touching hardware
@@ -901,6 +927,8 @@ impl App {
                 };
                 if let Some(num) = num {
                     self.load_channel_num(num);
+                } else {
+                    self.no_channels_ticks = NO_CHANNELS_HOLD_TICKS;
                 }
             }
             ChVfoMode::Channel => {
@@ -1123,6 +1151,16 @@ impl App {
 
     pub fn ani_caller_id(&self) -> Option<[u8; 3]> {
         self.ani_caller
+    }
+
+    pub fn poll_no_channels_notice(&mut self) {
+        if self.no_channels_ticks > 0 {
+            self.no_channels_ticks -= 1;
+        }
+    }
+
+    pub fn no_channels_notice(&self) -> bool {
+        self.no_channels_ticks > 0
     }
 
     // key dispatch
