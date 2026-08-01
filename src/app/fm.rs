@@ -209,8 +209,7 @@ fn commit_input(app: &mut App, syst: &mut SYST) {
         }
         ChVfoMode::Channel => {
             let slot = value as usize;
-            if slot >= 1
-                && slot <= flash_map::FM_CHANNEL_COUNT
+            if (1..=flash_map::FM_CHANNEL_COUNT).contains(&slot)
                 && app.fm_channels[slot - 1] != flash_map::FM_CHANNEL_EMPTY
             {
                 app.fm.channel_index = (slot - 1) as u8;

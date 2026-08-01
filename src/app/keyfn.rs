@@ -13,6 +13,7 @@ pub enum KeyFunction {
     Power,
     Flashlight,
     Search,
+    Reverse,
 }
 
 impl KeyFunction {
@@ -28,6 +29,7 @@ impl KeyFunction {
             KeyFunction::Power => "POWER",
             KeyFunction::Flashlight => "LIGHT",
             KeyFunction::Search => "SEARCH",
+            KeyFunction::Reverse => "REVERSE",
         }
     }
 }
@@ -43,6 +45,7 @@ pub(super) fn from_u8(v: u8) -> KeyFunction {
         7 => KeyFunction::Power,
         8 => KeyFunction::Flashlight,
         9 => KeyFunction::Search,
+        10 => KeyFunction::Reverse,
         _ => KeyFunction::None,
     }
 }
@@ -58,5 +61,6 @@ pub(super) fn invoke(app: &mut App, syst: &mut SYST, func: KeyFunction) {
         KeyFunction::Power => app.toggle_power(syst),
         KeyFunction::Flashlight => app.flashlight.toggle(),
         KeyFunction::Search => search::enter(app, syst),
+        KeyFunction::Reverse => app.toggle_reverse(syst),
     }
 }

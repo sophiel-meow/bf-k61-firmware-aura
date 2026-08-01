@@ -182,6 +182,7 @@ pub struct Radio {
 
     sql_level: u8,
     tail_elimination: bool,
+    rptrl: u8,
     beeps_enabled: bool,
     roger_tone: RogerTone,
     scramble_level: u8,
@@ -223,6 +224,7 @@ impl Radio {
             cfg,
             sql_level: 3,
             tail_elimination: true,
+            rptrl: 0,
             beeps_enabled: true,
             roger_tone: RogerTone::Off,
             scramble_level: 0,
@@ -351,6 +353,10 @@ impl Radio {
         self.tail_elimination = enabled;
     }
 
+    pub fn set_rptrl(&mut self, steps: u8) {
+        self.rptrl = steps;
+    }
+
     pub fn set_beeps_enabled(&mut self, enabled: bool) {
         self.beeps_enabled = enabled;
     }
@@ -384,6 +390,19 @@ impl Radio {
         self.fd6818.exit_dtmf_mode(syst);
         self.fd6818.set_scramble(syst, self.scramble_level);
         self.fd6818.enter_dtmf_mode(syst, false);
+    }
+
+    pub fn send_ani(&mut self, syst: &mut SYST, target: [u8; 3]) {
+        let digits = [
+            target[0],
+            target[1],
+            target[2],
+            self.ani.separator,
+            self.ani.machine_id[0],
+            self.ani.machine_id[1],
+            self.ani.machine_id[2],
+        ];
+        self.send_dtmf_digits(syst, &digits);
     }
 
     pub fn poll_dtmf(&mut self, syst: &mut SYST) -> Option<[u8; 3]> {
@@ -640,6 +659,9 @@ impl Radio {
             self.fd6818.send_tail(syst, true);
             delay::ms(syst, SEND_TAIL_HOLD_MS);
             self.fd6818.send_tail(syst, false);
+        }
+        if self.rptrl > 0 {
+            delay::ms(syst, self.rptrl as u32 * 100);
         }
         self.enter_rx(syst);
     }

@@ -1,8 +1,10 @@
 mod chanmgr;
+mod contacts;
 mod fm;
 mod keyfn;
 mod keys;
 mod launcher;
+mod name_edit;
 mod scan;
 mod scanqt;
 mod search;
@@ -12,7 +14,7 @@ mod side;
 
 use crate::device::flashlight::Flashlight;
 use crate::device::fm_radio::FmRadio;
-use crate::device::keypad::{KeyEvent, KeyEventKind, KeyId, Keypad};
+use crate::device::keypad::{KeyId, Keypad};
 use crate::device::radio::{ChannelConfig, Modulation, Power, Radio, RogerTone, SubAudio};
 use crate::device::storage::Storage;
 use crate::flash_map::{self, addr};
@@ -34,6 +36,8 @@ const TICKS_PER_SECOND: u16 = 100;
 
 const ANI_DISPLAY_HOLD_TICKS: u16 = 500;
 
+const DTMF_DIAL_MAX_DIGITS: usize = 16;
+
 const POWER_SAVE_IDLE_TICKS: u16 = 1000;
 const POWER_SAVE_AWAKE_TICKS: u16 = 10;
 const POWER_SAVE_SLEEP_TICKS_PER_LEVEL: u16 = 10;
@@ -42,7 +46,6 @@ const BACKLIGHT_STEP_TICKS: u16 = 500;
 
 const VOX_THRESHOLD_TABLE: [u8; 11] = [127, 52, 62, 72, 84, 95, 106, 117, 125, 132, 140];
 const VOX_TX_HYSTERESIS: u8 = 8;
-const VOX_WORK_HOLD_TICKS: u8 = 100;
 const VOX_HOLD_AFTER_RX_TICKS: u8 = 150;
 const VOX_HOLD_AFTER_KEY_TICKS: u8 = 40;
 const VOX_HOLD_AFTER_TX_FAIL_TICKS: u8 = 120;
@@ -58,13 +61,10 @@ pub enum Mode {
     Settings,
     ChanMgr,
     Fm,
-    Moni,
     Scan,
     Search,
     ScanQt,
-    Weather,
-    StopWatch,
-    Dtmf,
+    Contacts,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -123,17 +123,18 @@ fn dcs_from_table_index(idx: u16, inverted: bool) -> SubAudio {
 }
 
 fn power_from_raw(tx_power: u8) -> Power {
-    if tx_power & 0x01 != 0 {
-        Power::Low
-    } else {
-        Power::High
+    match tx_power {
+        1 => Power::Low,
+        2 => Power::Mid,
+        _ => Power::High,
     }
 }
 
 fn power_to_raw(power: Power) -> u8 {
     match power {
+        Power::High => 0,
         Power::Low => 1,
-        _ => 0,
+        Power::Mid => 2,
     }
 }
 
@@ -364,6 +365,7 @@ pub struct App {
     settings: flash_map::Settings,
     settings_ui: SettingsUi,
     chanmgr: chanmgr::ChanMgrUi,
+    contacts: contacts::ContactsUi,
     launcher_index: usize,
 
     master: usize,
@@ -387,6 +389,15 @@ pub struct App {
 
     ani_caller: Option<[u8; 3]>,
     ani_hold_ticks: u16,
+    /// Runtime "current call target" override:
+    /// sticky across PTTs, set by picking a contact in the Contacts app or
+    /// by a 3-digit manual DTMF dial, cleared whenever the active channel
+    /// changes. Falls back to the side's own `ani_target` (a contact-table
+    /// index) when `None`.
+    ani_target_override: Option<[u8; 3]>,
+    /// `Some` while the standby DTMF dial input box (`*` key) is open;
+    /// `None` the rest of the time (normal standby display).
+    dtmf_dial: Option<DigitInput<DTMF_DIAL_MAX_DIGITS>>,
 
     battery_cal: [u8; 7],
     battery_bars: u8,
@@ -441,6 +452,7 @@ impl App {
                 freq_dir: 0,
                 offset_hz: 0,
                 reversed: false,
+                ani_target: None,
                 cfg: default_cfg,
                 name: [0; 12],
                 vfo_backup: (default_cfg.freq_hz, 0, 0),
@@ -454,6 +466,7 @@ impl App {
                 freq_dir: 0,
                 offset_hz: 0,
                 reversed: false,
+                ani_target: None,
                 cfg: default_cfg,
                 name: [0; 12],
                 vfo_backup: (default_cfg.freq_hz, 0, 0),
@@ -481,6 +494,7 @@ impl App {
         radio.set_modulation(sides[0].cfg.modulation);
         radio.set_sql_level(syst, settings.sql_level);
         radio.set_tail_elimination(settings.tail_elimination);
+        radio.set_rptrl(settings.rptrl);
         radio.set_beeps_enabled(settings.beeps_switch);
         radio.set_roger_tone(RogerTone::from_u8(settings.roger_tone));
         radio.set_scramble_level(syst, settings.scramble_level);
@@ -495,6 +509,7 @@ impl App {
             settings,
             settings_ui: SettingsUi::new(),
             chanmgr: chanmgr::ChanMgrUi::new(),
+            contacts: contacts::ContactsUi::new(),
             launcher_index: 0,
             master: 0,
             watching: 0,
@@ -515,6 +530,8 @@ impl App {
             rtone_self_keyed: false,
             ani_caller: None,
             ani_hold_ticks: 0,
+            ani_target_override: None,
+            dtmf_dial: None,
             battery_cal,
             battery_bars: 4,
             rssi_raw: 0,
@@ -675,6 +692,7 @@ impl App {
     fn load_channel_num(&mut self, num: u16) {
         let ch = self.storage.read_channel(num);
         self.sides[self.master].load_channel(num, &ch);
+        self.ani_target_override = None;
     }
 
     // radio sync
@@ -802,12 +820,14 @@ impl App {
         }
 
         self.input.clear();
+        self.ani_target_override = None;
         self.sync_watching_to_master(syst);
     }
 
     fn switch_side(&mut self, syst: &mut SYST) {
         self.master = 1 - self.master;
         self.input.clear();
+        self.ani_target_override = None;
         self.sync_watching_to_master(syst);
     }
 
@@ -821,8 +841,9 @@ impl App {
     fn toggle_power(&mut self, syst: &mut SYST) {
         let s = &mut self.sides[self.master];
         s.cfg.power = match s.cfg.power {
-            Power::Low => Power::High,
-            _ => Power::Low,
+            Power::High => Power::Low,
+            Power::Low => Power::Mid,
+            Power::Mid => Power::High,
         };
         self.sync_watching_to_master(syst);
     }
@@ -851,11 +872,13 @@ impl App {
         self.sync_watching_to_master(syst);
     }
 
-    // test hook
-    fn test_send_dtmf(&mut self, syst: &mut SYST) {
-        self.set_ptt(syst, true);
-        self.radio.send_dtmf_digits(syst, &[1, 2, 3]);
-        self.set_ptt(syst, false);
+    fn resolve_ani_target(&mut self) -> Option<[u8; 3]> {
+        if let Some(id) = self.ani_target_override {
+            return Some(id);
+        }
+        let idx = self.sides[self.master].ani_target?;
+        let contact = self.storage.read_contact(idx);
+        (!contact.is_empty()).then(|| contact.id())
     }
 
     // auto-lock
@@ -907,7 +930,7 @@ impl App {
         }
 
         if mic_level > threshold {
-            self.vox_work_dly = VOX_WORK_HOLD_TICKS;
+            self.vox_work_dly = 50 + self.settings.vox_delay.min(15) * 10;
             if !self.transmitting {
                 self.set_ptt(syst, true);
                 if self.transmitting {
@@ -1069,6 +1092,45 @@ impl App {
         chanmgr::poll_name_timeout(self);
     }
 
+    // contacts app UI
+    pub fn contacts_is_detail(&self) -> bool {
+        contacts::is_detail(self)
+    }
+    pub fn contacts_list_row_count(&self) -> usize {
+        contacts::list_row_count()
+    }
+    pub fn contacts_list_selected_index(&self) -> usize {
+        contacts::list_selected_index(self)
+    }
+    pub fn contacts_list_label(&mut self, index: usize, w: &mut dyn core::fmt::Write) {
+        contacts::list_label(self, index, w)
+    }
+    pub fn contacts_field_count(&self) -> usize {
+        contacts::detail_field_count(self)
+    }
+    pub fn contacts_field_index(&self) -> usize {
+        contacts::detail_field_index(self)
+    }
+    pub fn contacts_field_label(&self, index: usize, w: &mut dyn core::fmt::Write) {
+        contacts::detail_label(self, index, w)
+    }
+    pub fn contacts_field_value(&self, index: usize, w: &mut dyn core::fmt::Write) -> bool {
+        contacts::detail_value(self, index, w)
+    }
+    pub fn contacts_field_cursor(&self, index: usize) -> Option<usize> {
+        contacts::detail_cursor(self, index)
+    }
+    pub fn contacts_detail_title(&self, w: &mut dyn core::fmt::Write) {
+        contacts::detail_title(self, w)
+    }
+    pub fn poll_contacts_name_timeout(&mut self) {
+        contacts::poll_name_timeout(self);
+    }
+
+    fn set_ani_target_override(&mut self, id: [u8; 3]) {
+        self.ani_target_override = Some(id);
+    }
+
     // PTT
     fn reload_pa_calibration(&mut self, tx_freq_hz: u32, power: Power) {
         self.radio
@@ -1106,6 +1168,20 @@ impl App {
                 self.transmitting = true;
                 self.tot_ticks = 0;
                 self.tx_prohibited = false;
+                if let Some(dial) = self.dtmf_dial.take() {
+                    let digits = &dial.digits[..dial.len];
+                    if dial.len == 3 {
+                        let target = [digits[0], digits[1], digits[2]];
+                        self.ani_target_override = Some(target);
+                        self.radio.send_ani(syst, target);
+                    } else if dial.len > 0 {
+                        self.radio.send_dtmf_digits(syst, digits);
+                    }
+                } else if self.settings.ani_tx {
+                    if let Some(target) = self.resolve_ani_target() {
+                        self.radio.send_ani(syst, target);
+                    }
+                }
             } else {
                 self.tx_prohibited = true;
             }
@@ -1321,5 +1397,21 @@ impl App {
 
     pub fn freq_input_digit(&self, idx: usize) -> u8 {
         self.input.digits[idx]
+    }
+
+    pub fn dtmf_dial_active(&self) -> bool {
+        self.dtmf_dial.is_some()
+    }
+
+    pub fn dtmf_dial_len(&self) -> usize {
+        self.dtmf_dial.as_ref().map_or(0, |d| d.len)
+    }
+
+    pub fn dtmf_dial_digit(&self, idx: usize) -> u8 {
+        self.dtmf_dial.as_ref().map_or(0, |d| d.digits[idx])
+    }
+
+    pub fn dtmf_dial_capacity(&self) -> usize {
+        DTMF_DIAL_MAX_DIGITS
     }
 }

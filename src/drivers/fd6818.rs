@@ -205,11 +205,9 @@ const WORK_MODE_FSK_TX_IRQ: u16 = 0x8000;
 /// REG 0x02: write 0 to clear the pending work-mode interrupt flag.
 const REG_INT_CLEAR: u8 = 0x02;
 
-/// REG 0x24: DTMF decoder enable/threshold. bits[12:7] = detect threshold
-/// (0..63); base value leaves the rest at the chip's documented defaults.
 const REG_DTMF_ENABLE: u8 = 0x24;
 const DTMF_ENABLE_BASE: u16 = 0x807F;
-const DTMF_THRESHOLD: u16 = 20;
+const DTMF_THRESHOLD: u16 = 130; // higher to ensure acc.
 /// REG 0x0B[11:8]: last decoded DTMF digit nibble (keypad order: 0-9, then
 /// A-D, then *, #, matching `DTMF_KEYPAD`'s index order).
 const REG_DTMF_RESULT: u8 = 0x0B;

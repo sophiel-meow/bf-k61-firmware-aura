@@ -18,14 +18,18 @@ pub enum SettingItem {
     AutoLk,
     Vox,
     VoxLv,
+    VoxDly,
     Scrm,
     Rtone,
+    Tail,
     Rptrl,
     Contrast,
     Roge,
     ScanMd,
     Rit,
     ChDisp,
+    AniTx,
+    AniCall,
     Side1Short,
     Side1Long,
     Side2Short,
@@ -36,7 +40,7 @@ pub enum SettingItem {
     Reset,
 }
 
-pub const SETTINGS_ORDER: [SettingItem; 34] = [
+pub const SETTINGS_ORDER: [SettingItem; 38] = [
     SettingItem::Sql,
     SettingItem::Step,
     SettingItem::Tot,
@@ -55,14 +59,18 @@ pub const SETTINGS_ORDER: [SettingItem; 34] = [
     SettingItem::AutoLk,
     SettingItem::Vox,
     SettingItem::VoxLv,
+    SettingItem::VoxDly,
     SettingItem::Scrm,
     SettingItem::Rtone,
+    SettingItem::Tail,
     SettingItem::Rptrl,
     SettingItem::Contrast,
     SettingItem::Roge,
     SettingItem::ScanMd,
     SettingItem::Rit,
     SettingItem::ChDisp,
+    SettingItem::AniTx,
+    SettingItem::AniCall,
     SettingItem::Side1Short,
     SettingItem::Side1Long,
     SettingItem::Side2Short,
@@ -94,14 +102,18 @@ impl SettingItem {
             SettingItem::AutoLk => "AUTOLK",
             SettingItem::Vox => "VOX",
             SettingItem::VoxLv => "VOXLV",
+            SettingItem::VoxDly => "VOXDLY",
             SettingItem::Scrm => "SCRM",
             SettingItem::Rtone => "RTONE",
+            SettingItem::Tail => "STE",
             SettingItem::Rptrl => "RPTRL",
             SettingItem::Contrast => "CONTR",
             SettingItem::Roge => "ROGER",
             SettingItem::ScanMd => "SCANMD",
             SettingItem::Rit => "RIT",
             SettingItem::ChDisp => "CHDISP",
+            SettingItem::AniTx => "ANI-TX",
+            SettingItem::AniCall => "CALL",
             SettingItem::Side1Short => "S1-SH",
             SettingItem::Side1Long => "S1-LG",
             SettingItem::Side2Short => "S2-SH",
@@ -114,7 +126,7 @@ impl SettingItem {
     }
 
     pub fn is_placeholder(self) -> bool {
-        matches!(self, SettingItem::Rptrl)
+        false
     }
 }
 

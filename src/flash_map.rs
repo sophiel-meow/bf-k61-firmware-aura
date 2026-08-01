@@ -16,6 +16,10 @@ pub mod addr {
     pub const DTMFINFOR_ADDR: u32 = 0xA000;
     pub const DTMF_KILLED_ADDR: u32 = 0xA010;
     pub const DTMF_CODE_ADDR: u32 = 0xA020;
+    pub const CONTACT_SIZE: u32 = 16;
+    pub const CONTACT_COUNT: usize = 20;
+    pub const DTMF_ONLINE_ADDR: u32 = 0xA180;
+    pub const DTMF_OFFLINE_ADDR: u32 = 0xA190;
 
     pub const SCAN_LIST_ADDR: u32 = 0xB000;
 
@@ -227,6 +231,61 @@ impl Channel {
             self.flags &= !0x04;
         }
     }
+
+    pub fn ani_target(&self) -> Option<u8> {
+        let idx = self.dtmf_group & 0x1f;
+        if (idx as usize) < addr::CONTACT_COUNT {
+            Some(idx)
+        } else {
+            None
+        }
+    }
+
+    pub fn set_ani_target(&mut self, target: Option<u8>) {
+        let idx = target.map_or(0x1f, |t| t.min(0x1f));
+        self.dtmf_group = idx;
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct Contact {
+    id_raw: [u8; 5],
+    pub name: [u8; 11],
+}
+
+impl Contact {
+    pub const BLANK: Contact = Contact {
+        id_raw: [0xFF; 5],
+        name: [0xFF; 11],
+    };
+
+    pub fn from_bytes(buf: &[u8; addr::CONTACT_SIZE as usize]) -> Contact {
+        Contact {
+            id_raw: buf[0..5].try_into().unwrap(),
+            name: buf[5..16].try_into().unwrap(),
+        }
+    }
+
+    pub fn to_bytes(&self) -> [u8; addr::CONTACT_SIZE as usize] {
+        let mut buf = [0u8; addr::CONTACT_SIZE as usize];
+        buf[0..5].copy_from_slice(&self.id_raw);
+        buf[5..16].copy_from_slice(&self.name);
+        buf
+    }
+
+    pub fn id(&self) -> [u8; 3] {
+        [self.id_raw[0], self.id_raw[1], self.id_raw[2]]
+    }
+
+    pub fn set_id(&mut self, id: [u8; 3]) {
+        self.id_raw[0] = id[0];
+        self.id_raw[1] = id[1];
+        self.id_raw[2] = id[2];
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.id_raw.iter().all(|&b| b == 0xFF)
+    }
 }
 
 /// On-flash VFO record: `STR_VFOMODE`, 32 bytes (`VFO_SIZE`).
@@ -303,6 +362,25 @@ impl VfoMode {
     /// (0 = simplex, 1 = +, 2 = -)
     pub fn freq_dir(&self) -> u8 {
         self.dtmf_group >> 5
+    }
+
+    pub fn set_freq_dir(&mut self, dir: u8) {
+        self.dtmf_group = (dir << 5) | (self.dtmf_group & 0x1f);
+    }
+
+    /// `dtmfgroup`'s low 5 bits, same convention as `Channel::ani_target`.
+    pub fn ani_target(&self) -> Option<u8> {
+        let idx = self.dtmf_group & 0x1f;
+        if (idx as usize) < addr::CONTACT_COUNT {
+            Some(idx)
+        } else {
+            None
+        }
+    }
+
+    pub fn set_ani_target(&mut self, target: Option<u8>) {
+        let idx = target.map_or(0x1f, |t| t.min(0x1f));
+        self.dtmf_group = (self.dtmf_group & 0xe0) | idx;
     }
 
     /// `vfoFlag.Bit.b6`: 0 = wide (25K), 1 = narrow (12.5K).
@@ -382,6 +460,18 @@ pub struct Settings {
     pub side2_long: u8,
     pub band_short: u8,
     pub band_long: u8,
+    /// Auto-send our own ANI frame (`[call target] + separator +
+    /// [machine id]`) on PTT press. The call target itself is per-side
+    /// (`Channel`/`VfoMode::ani_target`, or a runtime override); this is
+    /// just the master on/off switch.
+    pub ani_tx: bool,
+    /// `rptrl`: 0-10, steps of 100ms (0-1000ms). Holds the receiver muted
+    /// for this long after our own PTT release, riding out a repeater's
+    /// hang time/courtesy tone before re-arming the squelch.
+    pub rptrl: u8,
+    /// `voxDelay`: 0-15, steps of 0.1s over 0.5-2.0s. How long VOX keeps
+    /// PTT keyed after mic level drops back below threshold.
+    pub vox_delay: u8,
 }
 
 impl Settings {
@@ -411,9 +501,12 @@ impl Settings {
         side2_long: 3,  // Mode
         band_short: 9,  // Search
         band_long: 0,   // None
+        ani_tx: false,
+        rptrl: 0,
+        vox_delay: 5, // 1.0s, matching the previous hardcoded hang time
     };
 
-    pub fn from_bytes(buf: &[u8; 25]) -> Settings {
+    pub fn from_bytes(buf: &[u8; 28]) -> Settings {
         Settings {
             sql_level: buf[0],
             tail_elimination: buf[1] != 0,
@@ -434,16 +527,19 @@ impl Settings {
             save_level: buf[16].min(4),
             backlight_time: buf[17].min(4),
             channel_display_mode: buf[18].min(2),
-            side1_short: buf[19].min(9),
-            side1_long: buf[20].min(9),
-            side2_short: buf[21].min(9),
-            side2_long: buf[22].min(9),
-            band_short: buf[23].min(9),
-            band_long: buf[24].min(9),
+            side1_short: buf[19].min(10),
+            side1_long: buf[20].min(10),
+            side2_short: buf[21].min(10),
+            side2_long: buf[22].min(10),
+            band_short: buf[23].min(10),
+            band_long: buf[24].min(10),
+            ani_tx: buf[25] != 0,
+            rptrl: buf[26].min(10),
+            vox_delay: buf[27].min(15),
         }
     }
 
-    pub fn to_bytes(&self) -> [u8; 25] {
+    pub fn to_bytes(&self) -> [u8; 28] {
         [
             self.sql_level,
             self.tail_elimination as u8,
@@ -470,6 +566,9 @@ impl Settings {
             self.side2_long,
             self.band_short,
             self.band_long,
+            self.ani_tx as u8,
+            self.rptrl,
+            self.vox_delay,
         ]
     }
 

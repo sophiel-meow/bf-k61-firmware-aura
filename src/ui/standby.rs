@@ -134,20 +134,21 @@ where
     .ok();
 
     // Row B: channel number / VFO label
-    let mut chan_label: TextBuf<8> = TextBuf::new();
-    if app.side_is_channel_mode(i) {
-        write!(chan_label, "M{}", app.side_channel_num(i)).ok();
-    } else {
-        write!(chan_label, "VFO").ok();
+    if is_master || (!app.dtmf_dial_active()) {
+        let mut chan_label: TextBuf<8> = TextBuf::new();
+        if app.side_is_channel_mode(i) {
+            write!(chan_label, "M{}", app.side_channel_num(i)).ok();
+        } else {
+            write!(chan_label, "VFO").ok();
+        }
+        Text::new(
+            chan_label.as_str(),
+            Point::new(2, top + 8 + FONT_5X8.baseline as i32),
+            small,
+        )
+        .draw(lcd)
+        .ok();
     }
-    Text::new(
-        chan_label.as_str(),
-        Point::new(2, top + 8 + FONT_5X8.baseline as i32),
-        small,
-    )
-    .draw(lcd)
-    .ok();
-
     // Right-hand primary slot
     let channel_mode = app.side_is_channel_mode(i);
     let name = app.side_name_str(i);
@@ -161,6 +162,8 @@ where
 
     if is_master && app.freq_input_len() > 0 {
         draw_freq_input(lcd, app, top + PROFONT_14_POINT.baseline as i32);
+    } else if !is_master && app.dtmf_dial_active() {
+        draw_dtmf_dial_input(lcd, app, top + PROFONT_14_POINT.baseline as i32);
     } else {
         match app.channel_display_mode() {
             ChannelDisplayMode::NameFreq if has_name => {
@@ -195,10 +198,12 @@ where
     }
 
     // Row C: mode line (RX) or TX antenna + power bars + mic bar.
-    if transmitting_here {
-        draw_tx_row(lcd, app, top);
-    } else {
-        draw_mode_line(lcd, app, i, top + BAND_HEIGHT - 1);
+    if is_master || (!app.dtmf_dial_active()) {
+        if transmitting_here {
+            draw_tx_row(lcd, app, top);
+        } else {
+            draw_mode_line(lcd, app, i, top + BAND_HEIGHT - 1);
+        }
     }
 }
 
@@ -278,6 +283,33 @@ where
         }
     }
     draw_right_aligned(lcd, buf.as_str(), &PROFONT_14_POINT, baseline_y);
+}
+
+fn draw_dtmf_dial_input<D>(lcd: &mut D, app: &app::App, baseline_y: i32)
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    let len = app.dtmf_dial_len();
+    let cap = app.dtmf_dial_capacity();
+    let mut buf: TextBuf<17> = TextBuf::new();
+    write!(buf, ">").ok();
+    for pos in 0..cap {
+        if pos < len {
+            write!(buf, "{}", dtmf_char(app.dtmf_dial_digit(pos))).ok();
+        } else {
+            write!(buf, "-").ok();
+        }
+    }
+    Text::new(
+        buf.as_str(),
+        Point::new(
+            2,
+            baseline_y - PROFONT_14_POINT.baseline as i32 + FONT_6X10.baseline as i32,
+        ),
+        MonoTextStyle::new(&FONT_6X10, BinaryColor::On),
+    )
+    .draw(lcd)
+    .ok();
 }
 
 fn tone_mode_label(tx: SubAudio, rx: SubAudio) -> &'static str {
@@ -493,14 +525,11 @@ where
         Power::High => 6,
     };
     for k in 1..=pwr {
-        let h = (k as i32 + 1).min(8);
-        Rectangle::new(
-            Point::new(2 + 2 + k as i32 * 3, y + 8 - h),
-            Size::new(2, h as u32),
-        )
-        .into_styled(PrimitiveStyle::with_fill(BinaryColor::On))
-        .draw(lcd)
-        .ok();
+        let h = (k + 1).min(8);
+        Rectangle::new(Point::new(2 + 2 + k * 3, y + 8 - h), Size::new(2, h as u32))
+            .into_styled(PrimitiveStyle::with_fill(BinaryColor::On))
+            .draw(lcd)
+            .ok();
     }
 }
 

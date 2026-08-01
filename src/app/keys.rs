@@ -1,11 +1,12 @@
 use super::chanmgr;
+use super::contacts;
 use super::fm;
 use super::keyfn;
 use super::launcher::{LauncherEntry, LAUNCHER_ITEMS};
 use super::settings;
 use super::settings_ops;
 use super::{
-    digit_value, App, ChVfoMode, Mode, CHANNEL_INPUT_DIGITS, DUAL_STANDBY_HOLD_TICKS,
+    digit_value, App, ChVfoMode, DigitInput, Mode, CHANNEL_INPUT_DIGITS, DUAL_STANDBY_HOLD_TICKS,
     RTONE_HZ_DIV_10, VFO_INPUT_DIGITS, VOX_HOLD_AFTER_KEY_TICKS,
 };
 use super::{scan, scanqt, search};
@@ -49,11 +50,11 @@ pub(super) fn dispatch(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
         Mode::AppMenu => dispatch_app_menu(app, syst, ev),
         Mode::Settings => dispatch_settings(app, syst, ev),
         Mode::ChanMgr => chanmgr::dispatch(app, ev),
+        Mode::Contacts => contacts::dispatch(app, ev),
         Mode::Scan => scan::dispatch(app, syst, ev),
         Mode::Search => search::dispatch(app, syst, ev),
         Mode::ScanQt => scanqt::dispatch(app, syst, ev),
         Mode::Fm => fm::dispatch(app, syst, ev),
-        _ => {}
     }
 }
 
@@ -87,6 +88,11 @@ fn dispatch_tx_tone(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
 fn dispatch_standby(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
     app.dual_hold_ticks = DUAL_STANDBY_HOLD_TICKS;
 
+    if app.dtmf_dial.is_some() {
+        dispatch_dtmf_dial(app, ev);
+        return;
+    }
+
     match ev.kind {
         KeyEventKind::Single => {
             if let Some(d) = digit_value(ev.key) {
@@ -106,7 +112,7 @@ fn dispatch_standby(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
                 KeyId::Exit => app.input.clear(),
                 KeyId::Vm => app.toggle_vfo_channel(syst),
                 KeyId::Ab => app.switch_side(syst),
-                KeyId::Asterisk => app.toggle_reverse(syst),
+                KeyId::Asterisk => app.dtmf_dial = Some(DigitInput::new()),
                 KeyId::Menu => enter_app_menu(app),
                 KeyId::Side1 | KeyId::Side2 | KeyId::Band => {
                     let func = keyfn::from_u8(short_function(app, ev.key));
@@ -122,8 +128,6 @@ fn dispatch_standby(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
         },
         KeyEventKind::Long => match ev.key {
             KeyId::Asterisk => app.key_lock = !app.key_lock,
-            KeyId::Digit8 => app.toggle_power(syst),
-            KeyId::Digit9 => app.test_send_dtmf(syst),
             KeyId::Pound => scan::enter(app, syst),
             KeyId::Side1 | KeyId::Side2 | KeyId::Band => {
                 let func = keyfn::from_u8(long_function(app, ev.key));
@@ -132,6 +136,32 @@ fn dispatch_standby(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
             _ => {}
         },
         _ => {}
+    }
+}
+
+fn dispatch_dtmf_dial(app: &mut App, ev: KeyEvent) {
+    if ev.kind == KeyEventKind::Long && ev.key == KeyId::Exit {
+        app.dtmf_dial = None;
+        return;
+    }
+    if ev.kind != KeyEventKind::Single {
+        return;
+    }
+    if let Some(d) = digit_value(ev.key) {
+        app.dtmf_dial.as_mut().unwrap().push(d);
+        return;
+    }
+    let code = match ev.key {
+        KeyId::Menu => Some(10),
+        KeyId::Up => Some(11),
+        KeyId::Down => Some(12),
+        KeyId::Exit => Some(13),
+        KeyId::Asterisk => Some(14),
+        KeyId::Pound => Some(15),
+        _ => None,
+    };
+    if let Some(code) = code {
+        app.dtmf_dial.as_mut().unwrap().push(code);
     }
 }
 
@@ -176,6 +206,7 @@ fn dispatch_app_menu(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
                     match entry {
                         LauncherEntry::Settings => settings_ops::enter(app),
                         LauncherEntry::ChannelMgr => chanmgr::enter(app),
+                        LauncherEntry::Contacts => contacts::enter(app),
                         LauncherEntry::ScanQt => scanqt::enter(app, syst),
                         LauncherEntry::FmRadio => fm::enter(app, syst),
                         LauncherEntry::Search => search::enter(app, syst),

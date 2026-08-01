@@ -1,3 +1,4 @@
+use super::name_edit::{write_name_plain, NameEdit};
 use super::{
     channel_name_str, clamp_step, digit_value, power_from_raw, power_to_raw, subaudio_from_code,
     subaudio_from_index, subaudio_index, subaudio_to_code, wrap_step, App, DigitInput, Mode,
@@ -7,122 +8,6 @@ use crate::device::keypad::{KeyEvent, KeyEventKind, KeyId};
 use crate::device::radio::{Power, SubAudio};
 use crate::flash_map;
 use core::fmt::Write;
-
-const MULTITAP_TIMEOUT_TICKS: u16 = 60;
-
-const KEY_CHARS: [&[u8]; 10] = [
-    b" ",
-    b",.?1",
-    b"ABCabc2",
-    b"DEFdef3",
-    b"GHIghi4",
-    b"JKLjkl5",
-    b"MNOmno6",
-    b"PQRSpqrs7",
-    b"TUVtuv8",
-    b"WXYZwxyz9",
-];
-
-struct NameEdit {
-    buf: [u8; 12],
-    cursor: usize,
-    pending: Option<(u8, usize)>,
-    idle_ticks: u16,
-}
-
-impl NameEdit {
-    const fn blank() -> Self {
-        NameEdit {
-            buf: [0; 12],
-            cursor: 0,
-            pending: None,
-            idle_ticks: 0,
-        }
-    }
-
-    fn start(&mut self, initial: [u8; 12]) {
-        self.buf = initial;
-        self.cursor = initial.iter().position(|&b| b == 0).unwrap_or(11).min(11);
-        self.pending = None;
-        self.idle_ticks = 0;
-    }
-
-    fn finalize_pending(&mut self) {
-        if self.pending.take().is_some() {
-            self.cursor = (self.cursor + 1).min(11);
-        }
-    }
-
-    fn max_cursor(&self) -> usize {
-        self.buf
-            .iter()
-            .rposition(|&b| b != 0)
-            .map_or(0, |p| p + 1)
-            .min(11)
-    }
-
-    fn move_cursor(&mut self, left: bool) {
-        self.finalize_pending();
-        self.cursor = if left {
-            self.cursor.saturating_sub(1)
-        } else {
-            (self.cursor + 1).min(self.max_cursor())
-        };
-    }
-
-    fn backspace(&mut self) {
-        self.finalize_pending();
-        if self.cursor == 0 {
-            return;
-        }
-        for i in (self.cursor - 1)..(self.buf.len() - 1) {
-            self.buf[i] = self.buf[i + 1];
-        }
-        *self.buf.last_mut().unwrap() = 0;
-        self.cursor -= 1;
-    }
-
-    fn insert_at_cursor(&mut self, ch: u8) {
-        let last = self.buf.len() - 1;
-        for i in (self.cursor..last).rev() {
-            self.buf[i + 1] = self.buf[i];
-        }
-        self.buf[self.cursor] = ch;
-    }
-
-    fn press_digit(&mut self, digit: u8) {
-        let table = KEY_CHARS[digit as usize];
-        match self.pending {
-            Some((d, idx)) if d == digit => {
-                let next = (idx + 1) % table.len();
-                self.buf[self.cursor] = table[next];
-                self.pending = Some((digit, next));
-            }
-            _ => {
-                self.finalize_pending();
-                self.insert_at_cursor(table[0]);
-                self.pending = Some((digit, 0));
-            }
-        }
-        self.idle_ticks = 0;
-    }
-
-    fn tick(&mut self) {
-        if self.pending.is_some() {
-            self.idle_ticks += 1;
-            if self.idle_ticks >= MULTITAP_TIMEOUT_TICKS {
-                self.finalize_pending();
-            }
-        }
-    }
-}
-
-fn write_name_plain(buf: &[u8; 12], w: &mut dyn Write) {
-    for &b in buf {
-        let ch = if b == 0 || b == 0xFF { ' ' } else { b as char };
-        let _ = w.write_char(ch);
-    }
-}
 
 // detail-page fields
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -136,12 +21,13 @@ enum Field {
     Wn,
     ScanAdd,
     BusyLock,
+    AniCall,
     Name,
     Save,
     Delete,
 }
 
-const BASE_FIELDS: [Field; 11] = [
+const BASE_FIELDS: [Field; 12] = [
     Field::Freq,
     Field::Sftd,
     Field::Offset,
@@ -151,6 +37,7 @@ const BASE_FIELDS: [Field; 11] = [
     Field::Wn,
     Field::ScanAdd,
     Field::BusyLock,
+    Field::AniCall,
     Field::Name,
     Field::Save,
 ];
@@ -179,6 +66,7 @@ impl Field {
             Field::Wn => "W/N",
             Field::ScanAdd => "SCAN",
             Field::BusyLock => "BCL",
+            Field::AniCall => "CALL",
             Field::Name => "NAME",
             Field::Save => "SAVE",
             Field::Delete => "DEL",
@@ -195,6 +83,7 @@ impl Field {
                 | Field::Wn
                 | Field::ScanAdd
                 | Field::BusyLock
+                | Field::AniCall
         )
     }
 }
@@ -287,7 +176,7 @@ struct ChannelEdit {
     snapshot: i32,
     freq_input: DigitInput<8>,
     offset_input: DigitInput<8>,
-    name_edit: NameEdit,
+    name_edit: NameEdit<12>,
 }
 
 fn derive_shift(ch: &flash_map::Channel) -> (u8, u32) {
@@ -348,10 +237,11 @@ fn current_value(edit: &ChannelEdit, field: Field) -> i32 {
         Field::Sftd => edit.sftd as i32,
         Field::RxCts => subaudio_index(subaudio_from_code(edit.working.rx_dcs_cts_num)),
         Field::TxCts => subaudio_index(subaudio_from_code(edit.working.tx_dcs_cts_num)),
-        Field::Power => matches!(power_from_raw(edit.working.tx_power), Power::Low) as i32,
+        Field::Power => power_to_raw(power_from_raw(edit.working.tx_power)) as i32,
         Field::Wn => edit.working.wide_narrow() as i32,
         Field::ScanAdd => edit.working.scan_add() as i32,
         Field::BusyLock => edit.working.busy_lock() as i32,
+        Field::AniCall => edit.working.ani_target().map_or(-1, |t| t as i32),
         _ => 0,
     }
 }
@@ -361,7 +251,9 @@ fn adjust(edit: &mut ChannelEdit, field: Field, up: bool) {
     let new_val = match field {
         Field::Sftd => clamp_step(cur, up, 0, 2),
         Field::RxCts | Field::TxCts => wrap_step(cur, up, -1, SUBAUDIO_MAX_INDEX),
-        Field::Power | Field::Wn | Field::ScanAdd | Field::BusyLock => 1 - cur,
+        Field::Power => clamp_step(cur, up, 0, 2),
+        Field::Wn | Field::ScanAdd | Field::BusyLock => 1 - cur,
+        Field::AniCall => clamp_step(cur, up, -1, flash_map::addr::CONTACT_COUNT as i32 - 1),
         _ => cur,
     };
     apply(edit, field, new_val);
@@ -375,12 +267,13 @@ fn apply(edit: &mut ChannelEdit, field: Field, v: i32) {
         }
         Field::RxCts => edit.working.rx_dcs_cts_num = subaudio_to_code(subaudio_from_index(v)),
         Field::TxCts => edit.working.tx_dcs_cts_num = subaudio_to_code(subaudio_from_index(v)),
-        Field::Power => {
-            edit.working.tx_power = power_to_raw(if v != 0 { Power::Low } else { Power::High })
-        }
+        Field::Power => edit.working.tx_power = v as u8,
         Field::Wn => edit.working.set_wide_narrow(v != 0),
         Field::ScanAdd => edit.working.set_scan_add(v != 0),
         Field::BusyLock => edit.working.set_busy_lock(v != 0),
+        Field::AniCall => edit
+            .working
+            .set_ani_target((v >= 0).then_some(v as u8)),
         _ => {}
     }
 }
@@ -428,10 +321,10 @@ fn value_text_for(edit: &ChannelEdit, index: usize, field: Field, w: &mut dyn Wr
             let _ = write!(
                 w,
                 "{}",
-                if current_value(edit, field) != 0 {
-                    "LOW"
-                } else {
-                    "HIGH"
+                match power_from_raw(edit.working.tx_power) {
+                    Power::High => "HIGH",
+                    Power::Low => "LOW",
+                    Power::Mid => "MID",
                 }
             );
         }
@@ -457,6 +350,14 @@ fn value_text_for(edit: &ChannelEdit, index: usize, field: Field, w: &mut dyn Wr
                 }
             );
         }
+        Field::AniCall => match edit.working.ani_target() {
+            Some(t) => {
+                let _ = write!(w, "#{:02}", t + 1);
+            }
+            None => {
+                let _ = write!(w, "NONE");
+            }
+        },
         Field::Name => {
             let _ = write!(w, "{}", channel_name_str(&edit.working.name));
         }

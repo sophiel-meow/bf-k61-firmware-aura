@@ -45,8 +45,6 @@ impl KeyId {
                 | KeyId::Asterisk
                 | KeyId::Pound
                 | KeyId::Digit0
-                | KeyId::Digit8
-                | KeyId::Digit9
                 | KeyId::Exit
                 | KeyId::Side1
                 | KeyId::Side2

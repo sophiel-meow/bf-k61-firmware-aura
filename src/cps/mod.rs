@@ -143,7 +143,7 @@ fn handle_read(app: &mut App, dbg: &mut DebugUart, wire_addr: u16) {
 }
 
 fn read_channel(app: &mut App, logical: u32, buf: &mut [u8; frame::MAX_DATA]) -> Option<usize> {
-    if logical % addr::CHAN_SIZE != 0 {
+    if !logical.is_multiple_of(addr::CHAN_SIZE) {
         return None;
     }
     let num = (logical / addr::CHAN_SIZE) as u16;
@@ -194,7 +194,7 @@ fn handle_write(app: &mut App, dbg: &mut DebugUart, wire_addr: u16, data: &[u8])
 }
 
 fn write_channel(app: &mut App, logical: u32, data: &[u8]) -> bool {
-    if logical % addr::CHAN_SIZE != 0 || data.len() != addr::CHAN_SIZE as usize {
+    if !logical.is_multiple_of(addr::CHAN_SIZE) || data.len() != addr::CHAN_SIZE as usize {
         return false;
     }
     let num = (logical / addr::CHAN_SIZE) as u16;
@@ -210,7 +210,7 @@ const BOOTLOADER_CHUNK: u32 = 32;
 
 fn handle_read_boot(dbg: &mut DebugUart, wire_addr: u16) {
     let offset = wire_addr as u32;
-    if offset % BOOTLOADER_CHUNK != 0 || offset + BOOTLOADER_CHUNK > BOOTLOADER_LEN {
+    if !offset.is_multiple_of(BOOTLOADER_CHUNK) || offset + BOOTLOADER_CHUNK > BOOTLOADER_LEN {
         send_error(dbg, wire_addr, frame::ERR_BAD_ADDR);
         return;
     }

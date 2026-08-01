@@ -2,7 +2,6 @@ use super::standby::draw_frequency;
 use super::TextBuf;
 use crate::app;
 use crate::device::radio::SubAudio;
-use core::fmt::Write as _;
 use embedded_graphics::mono_font::{ascii::FONT_6X10, MonoTextStyle};
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;

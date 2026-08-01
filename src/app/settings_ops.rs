@@ -1,11 +1,11 @@
 use super::keyfn;
 use super::settings::SettingItem;
 use super::{
-    channel_display_mode_from_u8, clamp_step, subaudio_from_index, subaudio_index, wrap_step, App,
-    ChVfoMode, Mode, FIRMWARE_VERSION, RTONE_HZ_DIV_10, STEP_LIST_DECI_HZ, SUBAUDIO_MAX_INDEX,
+    channel_display_mode_from_u8, clamp_step, power_from_raw, power_to_raw, subaudio_from_index,
+    subaudio_index, wrap_step, App, Mode, FIRMWARE_VERSION, RTONE_HZ_DIV_10, STEP_LIST_DECI_HZ,
+    SUBAUDIO_MAX_INDEX,
 };
 use crate::device::radio::{Power, RogerTone, SubAudio};
-use crate::flash_map;
 use core::fmt::Write;
 use cortex_m::peripheral::{SCB, SYST};
 
@@ -41,7 +41,7 @@ pub(super) fn current_value(app: &App, item: SettingItem) -> i32 {
         SettingItem::Beep => app.settings.beeps_switch as i32,
         SettingItem::Roge => app.settings.roger_tone as i32,
         SettingItem::Wn => !side.cfg.wide_band as i32,
-        SettingItem::TxPr => matches!(side.cfg.power, Power::Low) as i32,
+        SettingItem::TxPr => power_to_raw(side.cfg.power) as i32,
         SettingItem::RxCts => subaudio_index(side.cfg.subaudio_rx),
         SettingItem::TxCts => subaudio_index(side.cfg.subaudio_tx),
         SettingItem::Scrm => app.settings.scramble_level as i32,
@@ -50,13 +50,18 @@ pub(super) fn current_value(app: &App, item: SettingItem) -> i32 {
         SettingItem::AutoLk => app.settings.key_auto_lock as i32,
         SettingItem::Vox => app.settings.vox_switch as i32,
         SettingItem::VoxLv => app.settings.vox_level as i32,
+        SettingItem::VoxDly => app.settings.vox_delay as i32,
         SettingItem::Rtone => app.settings.rtone as i32,
+        SettingItem::Tail => app.settings.tail_elimination as i32,
+        SettingItem::Rptrl => app.settings.rptrl as i32,
         SettingItem::Contrast => app.settings.contrast as i32,
         SettingItem::ScanMd => app.settings.scan_mode as i32,
         SettingItem::Rit => app.settings.rit_offset as i32,
         SettingItem::Save => app.settings.save_level as i32,
         SettingItem::Abr => app.settings.backlight_time as i32,
         SettingItem::ChDisp => app.settings.channel_display_mode as i32,
+        SettingItem::AniTx => app.settings.ani_tx as i32,
+        SettingItem::AniCall => side.ani_target.map_or(-1, |t| t as i32),
         SettingItem::Side1Short => app.settings.side1_short as i32,
         SettingItem::Side1Long => app.settings.side1_long as i32,
         SettingItem::Side2Short => app.settings.side2_short as i32,
@@ -81,8 +86,14 @@ pub(super) fn adjust(app: &mut App, syst: &mut SYST, item: SettingItem, up: bool
         | SettingItem::TxForbid
         | SettingItem::Beep
         | SettingItem::Wn
-        | SettingItem::TxPr => 1 - cur,
-        SettingItem::Roge => clamp_step(cur, up, 0, 2),
+        | SettingItem::Tail
+        | SettingItem::AniTx => 1 - cur,
+        SettingItem::VoxDly => clamp_step(cur, up, 0, 15),
+        SettingItem::Rptrl => clamp_step(cur, up, 0, 10),
+        SettingItem::AniCall => {
+            clamp_step(cur, up, -1, crate::flash_map::addr::CONTACT_COUNT as i32 - 1)
+        }
+        SettingItem::TxPr | SettingItem::Roge => clamp_step(cur, up, 0, 2),
         SettingItem::RxCts | SettingItem::TxCts => wrap_step(cur, up, -1, SUBAUDIO_MAX_INDEX),
         SettingItem::Scrm => clamp_step(cur, up, 0, 3),
         SettingItem::AutoLk => clamp_step(cur, up, 0, 3),
@@ -100,7 +111,7 @@ pub(super) fn adjust(app: &mut App, syst: &mut SYST, item: SettingItem, up: bool
         | SettingItem::Side2Short
         | SettingItem::Side2Long
         | SettingItem::BandShort
-        | SettingItem::BandLong => clamp_step(cur, up, 0, 9),
+        | SettingItem::BandLong => clamp_step(cur, up, 0, 10),
         _ => cur,
     };
     apply(app, syst, item, new_val);
@@ -133,7 +144,7 @@ pub(super) fn apply(app: &mut App, syst: &mut SYST, item: SettingItem, v: i32) {
             app.commit_side_change(syst);
         }
         SettingItem::TxPr => {
-            app.sides[app.master].cfg.power = if v != 0 { Power::Low } else { Power::High };
+            app.sides[app.master].cfg.power = power_from_raw(v as u8);
             app.commit_side_change(syst);
         }
         SettingItem::RxCts => {
@@ -169,7 +180,16 @@ pub(super) fn apply(app: &mut App, syst: &mut SYST, item: SettingItem, v: i32) {
             }
         }
         SettingItem::VoxLv => app.settings.vox_level = v as u8,
+        SettingItem::VoxDly => app.settings.vox_delay = v as u8,
         SettingItem::Rtone => app.settings.rtone = v as u8,
+        SettingItem::Tail => {
+            app.settings.tail_elimination = v != 0;
+            app.radio.set_tail_elimination(v != 0);
+        }
+        SettingItem::Rptrl => {
+            app.settings.rptrl = v as u8;
+            app.radio.set_rptrl(v as u8);
+        }
         SettingItem::Contrast => app.settings.contrast = v as u8,
         SettingItem::ScanMd => app.settings.scan_mode = v as u8,
         SettingItem::Save => {
@@ -183,6 +203,11 @@ pub(super) fn apply(app: &mut App, syst: &mut SYST, item: SettingItem, v: i32) {
         SettingItem::ChDisp => {
             app.settings.channel_display_mode = v as u8;
             app.set_channel_display_mode(channel_display_mode_from_u8(v as u8));
+        }
+        SettingItem::AniTx => app.settings.ani_tx = v != 0,
+        SettingItem::AniCall => {
+            app.sides[app.master].ani_target = (v >= 0).then_some(v as u8);
+            app.commit_side_change(syst);
         }
         SettingItem::Side1Short => app.settings.side1_short = v as u8,
         SettingItem::Side1Long => app.settings.side1_long = v as u8,
@@ -225,7 +250,11 @@ pub fn value_text_for(app: &App, index: usize, item: SettingItem, w: &mut dyn Wr
             let deci_hz = STEP_LIST_DECI_HZ[current_value(app, item) as usize];
             let _ = write!(w, "{}.{:02}k", deci_hz / 100, deci_hz % 100);
         }
-        SettingItem::Tdr | SettingItem::BusyLock | SettingItem::TxForbid | SettingItem::Beep => {
+        SettingItem::Tdr
+        | SettingItem::BusyLock
+        | SettingItem::TxForbid
+        | SettingItem::Beep
+        | SettingItem::Tail => {
             let _ = write!(
                 w,
                 "{}",
@@ -235,6 +264,18 @@ pub fn value_text_for(app: &App, index: usize, item: SettingItem, w: &mut dyn Wr
                     "OFF"
                 }
             );
+        }
+        SettingItem::VoxDly => {
+            let deci_s = 5 + current_value(app, item);
+            let _ = write!(w, "{}.{}S", deci_s / 10, deci_s % 10);
+        }
+        SettingItem::Rptrl => {
+            let v = current_value(app, item);
+            let _ = if v == 0 {
+                write!(w, "OFF")
+            } else {
+                write!(w, "{}MS", v * 100)
+            };
         }
         SettingItem::Roge => {
             let _ = write!(
@@ -289,10 +330,10 @@ pub fn value_text_for(app: &App, index: usize, item: SettingItem, w: &mut dyn Wr
             let _ = write!(
                 w,
                 "{}",
-                if current_value(app, item) != 0 {
-                    "LOW"
-                } else {
-                    "HIGH"
+                match power_from_raw(current_value(app, item) as u8) {
+                    Power::High => "HIGH",
+                    Power::Low => "LOW",
+                    Power::Mid => "MID",
                 }
             );
         }
@@ -388,7 +429,7 @@ pub fn value_text_for(app: &App, index: usize, item: SettingItem, w: &mut dyn Wr
         | SettingItem::Side2Long
         | SettingItem::BandShort
         | SettingItem::BandLong => {
-            let idx = current_value(app, item).clamp(0, 9) as u8;
+            let idx = current_value(app, item).clamp(0, 10) as u8;
             let _ = write!(w, "{}", keyfn::from_u8(idx).label());
         }
         _ => {

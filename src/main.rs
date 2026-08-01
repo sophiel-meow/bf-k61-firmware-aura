@@ -234,6 +234,7 @@ fn main() -> ! {
         app.poll_tot(&mut cp.SYST);
         app.poll_backlight();
         app.poll_chanmgr_name_timeout();
+        app.poll_contacts_name_timeout();
 
         // Scan / Search / ScanQt / Fm (each self-guards on the current mode)
         app.poll_search(&mut cp.SYST);

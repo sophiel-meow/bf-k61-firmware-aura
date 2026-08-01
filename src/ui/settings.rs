@@ -1,6 +1,5 @@
 use super::list::{draw_list, ListSource};
 use crate::app;
-use core::fmt::Write;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
 

@@ -7,7 +7,7 @@ use crate::hal::wear_leveled::WearLeveledRegion;
 const VFO_REGION: WearLeveledRegion<64> = WearLeveledRegion::new(addr::VFO_INFO_ADDR, 16);
 
 /// Global settings record.
-const SETTINGS_REGION: WearLeveledRegion<25> = WearLeveledRegion::new(addr::RADIO_IMFOS_ADDR, 16);
+const SETTINGS_REGION: WearLeveledRegion<28> = WearLeveledRegion::new(addr::RADIO_IMFOS_ADDR, 16);
 
 /// FM broadcast channel list: 30 slots x u16 (little-endian deci-MHz).
 const FM_PAYLOAD_LEN: usize = flash_map::FM_CHANNEL_COUNT * 2;
@@ -189,6 +189,27 @@ impl Storage {
 
         let offset = (addr - sector_addr) as usize;
         buf[offset..offset + addr::CHAN_SIZE as usize].copy_from_slice(&channel.to_bytes());
+
+        self.norflash.erase_sector(sector_addr);
+        self.norflash.write_bytes(sector_addr, &buf);
+    }
+
+    pub fn read_contact(&mut self, idx: u8) -> flash_map::Contact {
+        let addr = addr::DTMF_CODE_ADDR + idx as u32 * addr::CONTACT_SIZE;
+        let mut buf = [0u8; addr::CONTACT_SIZE as usize];
+        self.norflash.read_bytes(addr, &mut buf);
+        flash_map::Contact::from_bytes(&buf)
+    }
+
+    pub fn write_contact(&mut self, idx: u8, contact: &flash_map::Contact) {
+        let addr = addr::DTMF_CODE_ADDR + idx as u32 * addr::CONTACT_SIZE;
+        let sector_addr = (addr / SECTOR_SIZE) * SECTOR_SIZE;
+
+        let mut buf = [0u8; SECTOR_SIZE as usize];
+        self.norflash.read_bytes(sector_addr, &mut buf);
+
+        let offset = (addr - sector_addr) as usize;
+        buf[offset..offset + addr::CONTACT_SIZE as usize].copy_from_slice(&contact.to_bytes());
 
         self.norflash.erase_sector(sector_addr);
         self.norflash.write_bytes(sector_addr, &buf);

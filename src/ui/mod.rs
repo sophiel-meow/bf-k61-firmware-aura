@@ -1,4 +1,5 @@
 mod chanmgr;
+mod contacts;
 pub mod cps;
 mod fm;
 pub mod icons;
@@ -11,6 +12,7 @@ mod settings;
 mod standby;
 
 use chanmgr::draw_chanmgr;
+use contacts::draw_contacts;
 use fm::draw_fm;
 use launcher::draw_app_menu;
 use scan::draw_scan;
@@ -22,11 +24,6 @@ use standby::draw_standby;
 use crate::app;
 use crate::device::display::Display;
 use display_interface::WriteOnlyDataCommand;
-use embedded_graphics::mono_font::{ascii::FONT_6X10, MonoTextStyle};
-use embedded_graphics::pixelcolor::BinaryColor;
-use embedded_graphics::prelude::*;
-use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
-use embedded_graphics::text::Text;
 
 // TextBuf
 pub struct TextBuf<const N: usize> {
@@ -63,6 +60,7 @@ pub fn draw<DI: WriteOnlyDataCommand>(display: &mut Display<'_, DI>, app: &mut a
         app::Mode::AppMenu => draw_app_menu(display.as_draw_target(), &*app),
         app::Mode::Settings => draw_settings(display.as_draw_target(), &*app),
         app::Mode::ChanMgr => draw_chanmgr(display.as_draw_target(), app),
+        app::Mode::Contacts => draw_contacts(display.as_draw_target(), app),
         app::Mode::Scan => draw_scan(display.as_draw_target(), &*app),
         app::Mode::Search => draw_search(display.as_draw_target(), &*app),
         app::Mode::ScanQt => draw_scanqt(display.as_draw_target(), &*app),
