@@ -422,7 +422,11 @@ impl Radio {
 
     // band
     fn band(&self) -> Band {
-        if self.cfg.freq_hz >= 300_000_000 {
+        Self::band_of(self.cfg.freq_hz)
+    }
+
+    fn band_of(freq_hz: u32) -> Band {
+        if freq_hz >= 300_000_000 {
             Band::Uhf
         } else {
             Band::Vhf
@@ -850,6 +854,44 @@ impl Radio {
         self.dtmf_rx_len = 0;
         self.dtmf_rx_timeout = 0;
         self.tx_state = false;
+    }
+
+    pub fn spectrum_tune(&mut self, syst: &mut SYST, freq_hz: u32) {
+        match Self::band_of(freq_hz) {
+            Band::Uhf => board::set_rx_band_uhf(self.gpioa),
+            Band::Vhf => board::set_rx_band_vhf(self.gpioa),
+        }
+        self.fd6818.set_frequency_hz(syst, freq_hz);
+        self.fd6818.rx_on(syst);
+    }
+
+    pub fn spectrum_rssi(&mut self, syst: &mut SYST) -> u16 {
+        self.fd6818.wait_rssi_settled(syst);
+        self.fd6818.get_rssi(syst)
+    }
+
+    pub fn spectrum_set_wide(&mut self, syst: &mut SYST, wide: bool) {
+        self.fd6818.set_wide_bandwidth(syst, wide);
+    }
+
+    pub fn spectrum_set_modulation(&mut self, syst: &mut SYST, modulation: Modulation) {
+        self.fd6818.apply_modulation(syst, modulation);
+    }
+
+    pub fn spectrum_listen(
+        &mut self,
+        syst: &mut SYST,
+        on: bool,
+        wide: bool,
+        modulation: Modulation,
+    ) {
+        let state = if on {
+            AfOutState::RxAudio
+        } else {
+            AfOutState::Mute
+        };
+        self.fd6818.set_af_out(syst, state, wide, modulation);
+        board::set_speaker_switch(self.gpiob, on);
     }
 
     #[must_use]

@@ -547,9 +547,14 @@ where
 {
     let dbm = app.rssi_dbm();
     let level = app.s_meter_level();
+    let over = app.s_meter_over_s9_dbm();
 
     let mut line: TextBuf<20> = TextBuf::new();
-    write!(line, "{}dBm {}", dbm, app::s_meter_label(level)).ok();
+    if over > 0 {
+        write!(line, "{}dBm +{}", dbm, over).ok();
+    } else {
+        write!(line, "{}dBm S{}", dbm, app.s_meter_s_number()).ok();
+    }
     let style = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
     Text::new(
         line.as_str(),

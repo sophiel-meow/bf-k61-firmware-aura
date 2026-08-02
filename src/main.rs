@@ -286,10 +286,12 @@ fn main() -> ! {
         app.poll_chanmgr_name_timeout();
         app.poll_contacts_name_timeout();
 
-        // Scan / Search / ScanQt / Fm (each self-guards on the current mode)
+        // Scan / Search / ScanQt / Fm / Spectrum (each self-guards on the
+        // current mode)
         app.poll_search(&mut cp.SYST);
         app.poll_scanqt(&mut cp.SYST);
         app.poll_fm(&mut cp.SYST);
+        app.poll_spectrum(&mut cp.SYST);
         if due.every_50ms {
             app.poll_scan(&mut cp.SYST);
         }
@@ -323,7 +325,9 @@ fn main() -> ! {
             }
         }
 
-        if !app.is_transmitting() && !app.cw_key_down() {
+        // Spectrum mode drives the FD6818 directly and would fight with this
+        // normal-RX housekeeping
+        if !app.is_transmitting() && !app.cw_key_down() && app.mode() != app::Mode::Spectrum {
             if !app.power_save_is_asleep() {
                 app.poll_squelch(&mut cp.SYST, 3);
                 app.poll_dual_standby(&mut cp.SYST, app.rssi_open());

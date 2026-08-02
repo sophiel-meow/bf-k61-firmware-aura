@@ -63,6 +63,10 @@ const REG_OOB_NOISE: u8 = 0x4F;
 const REG_DISTORTION: u8 = 0x26;
 const REG_RSSI: u8 = 0x67;
 
+// FIXME: REG_64 not work? will produce ~20dbm gap between Wide & Narrow
+const RSSI_SETTLE_US_WIDE: u32 = 3000;
+const RSSI_SETTLE_US_NARROW: u32 = 12000;
+
 const REG_UNKNOWN_2A: u8 = 0x2A;
 const REG_UNKNOWN_21: u8 = 0x21;
 const REG_SCRAMBLE: u8 = 0x31;
@@ -427,6 +431,7 @@ pub struct Fd6818<'a> {
     pa_target: u8,
     rx_match_bit: SubaudioMatchBit,
     tone_active: bool,
+    current_wide: bool,
 }
 
 impl<'a> Fd6818<'a> {
@@ -442,6 +447,7 @@ impl<'a> Fd6818<'a> {
             pa_target: 100,
             rx_match_bit: SubaudioMatchBit::Ctcss,
             tone_active: false,
+            current_wide: true,
         }
     }
 
@@ -1298,6 +1304,15 @@ impl<'a> Fd6818<'a> {
         (self.read_reg(syst, REG_RSSI) & 0x01FF) >> 1
     }
 
+    pub fn wait_rssi_settled(&mut self, syst: &mut SYST) {
+        let us = if self.current_wide {
+            RSSI_SETTLE_US_WIDE
+        } else {
+            RSSI_SETTLE_US_NARROW
+        };
+        delay::us(syst, us);
+    }
+
     pub fn set_wide_bandwidth(&mut self, syst: &mut SYST, wide: bool) {
         let value = if wide {
             BANDWIDTH_WIDE
@@ -1305,22 +1320,34 @@ impl<'a> Fd6818<'a> {
             BANDWIDTH_NARROW
         };
         self.write_reg(syst, REG_BANDWIDTH, value);
+        self.current_wide = wide;
     }
 
+    const STATE_PREFIX_NARROW: u16 = 0x0000;
     const STATE_PREFIX_WIDE: u16 = 0x0200;
 
+    fn state_on_prefix(&self) -> u16 {
+        if self.current_wide {
+            Self::STATE_PREFIX_WIDE
+        } else {
+            Self::STATE_PREFIX_NARROW
+        }
+    }
+
     pub fn rx_on(&mut self, syst: &mut SYST) {
-        self.write_reg(syst, REG_STATE, Self::STATE_PREFIX_WIDE);
+        let prefix = self.state_on_prefix();
+        self.write_reg(syst, REG_STATE, prefix);
         self.write_reg(syst, REG_STATE, STATE_RX_ON);
     }
 
     pub fn tx_on(&mut self, syst: &mut SYST) {
-        self.write_reg(syst, REG_STATE, Self::STATE_PREFIX_WIDE);
+        let prefix = self.state_on_prefix();
+        self.write_reg(syst, REG_STATE, prefix);
         self.write_reg(syst, REG_STATE, STATE_TX_ON);
     }
 
     pub fn idle(&mut self, syst: &mut SYST) {
-        self.write_reg(syst, REG_STATE, Self::STATE_PREFIX_WIDE);
+        self.write_reg(syst, REG_STATE, Self::STATE_PREFIX_NARROW);
     }
 
     pub fn init(&mut self, syst: &mut SYST) {

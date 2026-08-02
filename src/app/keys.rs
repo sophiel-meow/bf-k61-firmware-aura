@@ -9,7 +9,7 @@ use super::{
     digit_value, App, ChVfoMode, DigitInput, Mode, BATTERY_CAL_REFERENCE_CV, CHANNEL_INPUT_DIGITS,
     DUAL_STANDBY_HOLD_TICKS, RTONE_HZ_DIV_10, VFO_INPUT_DIGITS, VOX_HOLD_AFTER_KEY_TICKS,
 };
-use super::{scan, scanqt, search};
+use super::{scan, scanqt, search, spectrum};
 use crate::device::keypad::{KeyEvent, KeyEventKind, KeyId};
 use crate::device::radio::Modulation;
 use cortex_m::peripheral::SYST;
@@ -56,6 +56,7 @@ pub(super) fn dispatch(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
         Mode::Search => search::dispatch(app, syst, ev),
         Mode::ScanQt => scanqt::dispatch(app, syst, ev),
         Mode::Fm => fm::dispatch(app, syst, ev),
+        Mode::Spectrum => spectrum::dispatch(app, syst, ev),
     }
 }
 
@@ -221,6 +222,7 @@ fn dispatch_app_menu(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
                         LauncherEntry::ScanQt => scanqt::enter(app, syst),
                         LauncherEntry::FmRadio => fm::enter(app, syst),
                         LauncherEntry::Search => search::enter(app, syst),
+                        LauncherEntry::Spectrum => spectrum::enter(app, syst),
                     }
                     debug_assert!(app.mode == entry.target_mode());
                 }

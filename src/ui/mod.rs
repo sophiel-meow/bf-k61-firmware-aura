@@ -10,6 +10,7 @@ mod scan;
 mod scanqt;
 mod search;
 mod settings;
+mod spectrum;
 mod standby;
 
 use chanmgr::draw_chanmgr;
@@ -20,6 +21,7 @@ use scan::draw_scan;
 use scanqt::draw_scanqt;
 use search::draw_search;
 use settings::draw_settings;
+use spectrum::draw_spectrum;
 use standby::draw_standby;
 
 use crate::app;
@@ -66,6 +68,7 @@ pub fn draw<DI: WriteOnlyDataCommand>(display: &mut Display<'_, DI>, app: &mut a
         app::Mode::Search => draw_search(display.as_draw_target(), &*app),
         app::Mode::ScanQt => draw_scanqt(display.as_draw_target(), &*app),
         app::Mode::Fm => draw_fm(display.as_draw_target(), &*app),
+        app::Mode::Spectrum => draw_spectrum(display.as_draw_target(), &*app),
         _ => draw_standby(display.as_draw_target(), &*app),
     }
     display.flush();

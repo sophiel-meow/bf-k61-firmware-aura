@@ -8,6 +8,7 @@ pub enum LauncherEntry {
     FmRadio,
     ScanQt,
     Search,
+    Spectrum,
 }
 
 pub const LAUNCHER_ITEMS: &[LauncherEntry] = &[
@@ -17,6 +18,7 @@ pub const LAUNCHER_ITEMS: &[LauncherEntry] = &[
     LauncherEntry::FmRadio,
     LauncherEntry::ScanQt,
     LauncherEntry::Search,
+    LauncherEntry::Spectrum,
 ];
 
 impl LauncherEntry {
@@ -28,6 +30,7 @@ impl LauncherEntry {
             LauncherEntry::FmRadio => "FM RADIO",
             LauncherEntry::ScanQt => "QT SCAN",
             LauncherEntry::Search => "FREQ HUNT",
+            LauncherEntry::Spectrum => "SPECTRUM",
         }
     }
 
@@ -39,6 +42,7 @@ impl LauncherEntry {
             LauncherEntry::FmRadio => true,
             LauncherEntry::ScanQt => true,
             LauncherEntry::Search => true,
+            LauncherEntry::Spectrum => true,
         }
     }
 
@@ -50,6 +54,7 @@ impl LauncherEntry {
             LauncherEntry::FmRadio => Mode::Fm,
             LauncherEntry::ScanQt => Mode::ScanQt,
             LauncherEntry::Search => Mode::Search,
+            LauncherEntry::Spectrum => Mode::Spectrum,
         }
     }
 }

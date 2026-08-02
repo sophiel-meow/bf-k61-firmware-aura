@@ -11,6 +11,7 @@ mod search;
 mod settings;
 mod settings_ops;
 mod side;
+mod spectrum;
 
 use crate::device::flashlight::Flashlight;
 use crate::device::fm_radio::FmRadio;
@@ -51,7 +52,15 @@ const POWER_SAVE_SLEEP_TICKS_PER_LEVEL: u16 = 10;
 const BACKLIGHT_STEP_TICKS: u16 = 500;
 
 /// TODO: calibrate per band
-const RSSI_DBM_BASE: i16 = 160 - 6;
+const RSSI_DBM_BASE: i16 = 160 - 6 + 20;
+
+pub fn rssi_raw_to_dbm(raw: u16) -> i32 {
+    raw as i32 - RSSI_DBM_BASE as i32
+}
+
+pub fn dbm_to_rssi_raw(dbm: i16) -> i32 {
+    dbm as i32 + RSSI_DBM_BASE as i32
+}
 
 /// Fixed reference point for `App::battery_voltage_cv`'s linear calibration
 /// (hundredths of a volt): `battery_cal_raw` is the raw ADC reading that's
@@ -88,6 +97,7 @@ pub enum Mode {
     Search,
     ScanQt,
     Contacts,
+    Spectrum,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -274,25 +284,6 @@ fn cw_safe_subaudio(cfg: &ChannelConfig) -> (SubAudio, SubAudio) {
 
 fn map(x: i32, in_min: i32, in_max: i32, out_min: i32, out_max: i32) -> i32 {
     (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
-}
-
-pub fn s_meter_label(level: u8) -> &'static str {
-    match level {
-        0 => "S0",
-        1 => "S1",
-        2 => "S2",
-        3 => "S3",
-        4 => "S4",
-        5 => "S5",
-        6 => "S6",
-        7 => "S7",
-        8 => "S8",
-        9 => "S9",
-        10 => "+10",
-        11 => "+20",
-        12 => "+30",
-        _ => "+40",
-    }
 }
 
 fn clamp_step(cur: i32, up: bool, lo: i32, hi: i32) -> i32 {
@@ -521,6 +512,8 @@ pub struct App {
     fm: fm::FmState,
     fm_radio: FmRadio<'static>,
     fm_channels: [u16; flash_map::FM_CHANNEL_COUNT],
+
+    spectrum: spectrum::SpectrumState,
 }
 
 impl App {
@@ -688,6 +681,7 @@ impl App {
             fm: fm::FmState::new(),
             fm_radio,
             fm_channels,
+            spectrum: spectrum::SpectrumState::new(default_cfg.freq_hz),
         }
     }
 
@@ -1181,7 +1175,7 @@ impl App {
     }
 
     pub fn rssi_dbm(&self) -> i32 {
-        self.rssi_raw as i32 - RSSI_DBM_BASE as i32
+        rssi_raw_to_dbm(self.rssi_raw as u16)
     }
 
     pub fn s_meter_level(&self) -> u8 {
@@ -1193,6 +1187,24 @@ impl App {
             let over = map(pos, 93, 53, 0, 4).clamp(0, 4);
             (9 + over) as u8
         }
+    }
+
+    pub fn s_meter_s_number(&self) -> u8 {
+        let pos = (-self.rssi_dbm()).clamp(53, 141);
+        map(pos, 141, 93, 1, 9).clamp(1, 9) as u8
+    }
+
+    /// How many dB over the S9 reference (-93dBm, matching f4hwn's
+    /// `rssi_dBm >= 93` threshold in its own pos-space) the signal reads,
+    /// 0..40, at full 1dB precision -- not bucketed into 10dB bar
+    /// segments like `s_meter_level`. Rounding to the nearest bar segment
+    /// made two radios reading the same signal within ~2dB of each other
+    /// (K6 -57dBm vs. a real BK4819 radio at -59dBm) show wildly
+    /// different labels (S9+30 vs. S9+35) even though the underlying
+    /// measurements agreed closely.
+    pub fn s_meter_over_s9_dbm(&self) -> i32 {
+        let pos = (-self.rssi_dbm()).clamp(53, 141);
+        (93 - pos).max(0)
     }
 
     pub fn mic_level(&self) -> u8 {
@@ -1695,6 +1707,51 @@ impl App {
     }
     pub fn fm_input_digit(&self, idx: usize) -> u8 {
         fm::input_digit(self, idx)
+    }
+    pub fn poll_spectrum(&mut self, syst: &mut SYST) {
+        spectrum::poll(self, syst);
+    }
+    pub fn spectrum_window_start_hz(&self) -> u32 {
+        spectrum::window_start_hz(self)
+    }
+    pub fn spectrum_scan_step_hz(&self) -> u32 {
+        spectrum::scan_step_hz(self)
+    }
+    pub fn spectrum_pan_step_hz(&self) -> u32 {
+        spectrum::pan_step_hz(self)
+    }
+    pub fn spectrum_bins(&self) -> u16 {
+        spectrum::bins(self)
+    }
+    pub fn spectrum_rssi_bin(&self, pos: usize) -> u16 {
+        spectrum::rssi_bin(self, pos)
+    }
+    pub fn spectrum_rssi_ceiling(&self) -> i16 {
+        spectrum::rssi_ceiling(self)
+    }
+    pub fn spectrum_trigger_level(&self) -> u16 {
+        spectrum::trigger_level(self)
+    }
+    pub fn spectrum_peak_bin(&self) -> Option<u16> {
+        spectrum::peak_bin(self)
+    }
+    pub fn spectrum_listening(&self) -> bool {
+        spectrum::listening(self)
+    }
+    pub fn spectrum_modulation(&self) -> Modulation {
+        spectrum::modulation(self)
+    }
+    pub fn spectrum_wide_bandwidth(&self) -> bool {
+        spectrum::wide_bandwidth(self)
+    }
+    pub fn spectrum_entering_freq(&self) -> bool {
+        spectrum::entering_freq(self)
+    }
+    pub fn spectrum_input_len(&self) -> usize {
+        spectrum::input_len(self)
+    }
+    pub fn spectrum_input_digit(&self, idx: usize) -> u8 {
+        spectrum::input_digit(self, idx)
     }
     pub fn rssi_open(&self) -> bool {
         self.radio.rssi_open()
