@@ -68,6 +68,14 @@ const VOX_HOLD_AFTER_PTT_TICKS: u8 = 100;
 
 const RTONE_HZ_DIV_10: [u16; 4] = [100, 145, 175, 210];
 
+/// CW/CWF sidetone pitch: a common CW monitor-tone frequency.
+const CW_SIDETONE_HZ_DIV_10: u16 = 70;
+/// BK-IN=Semi hang time after the last key release before dropping back to
+/// RX, in `TICKS_PER_SECOND` units.
+const CW_SEMI_HANG_TICKS: u16 = 80;
+/// BK-IN=Full's equivalent: much shorter
+const CW_FULL_HANG_TICKS: u16 = 6;
+
 // Mode
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -153,6 +161,26 @@ fn power_to_raw(power: Power) -> u8 {
     }
 }
 
+fn modulation_from_raw(raw: u8) -> Modulation {
+    match raw {
+        1 => Modulation::Am,
+        2 => Modulation::Usb,
+        3 => Modulation::Cw,
+        4 => Modulation::Cwf,
+        _ => Modulation::Fm,
+    }
+}
+
+fn modulation_to_raw(modulation: Modulation) -> u8 {
+    match modulation {
+        Modulation::Fm => 0,
+        Modulation::Am => 1,
+        Modulation::Usb => 2,
+        Modulation::Cw => 3,
+        Modulation::Cwf => 4,
+    }
+}
+
 fn digit_value(key: KeyId) -> Option<u8> {
     Some(match key {
         KeyId::Digit0 => 0,
@@ -232,6 +260,15 @@ fn subaudio_index(sub: SubAudio) -> i32 {
             }
             None => -1,
         },
+    }
+}
+
+/// CW's TX chain never writes subaudio registers
+fn cw_safe_subaudio(cfg: &ChannelConfig) -> (SubAudio, SubAudio) {
+    if cfg.modulation == Modulation::Cw {
+        (SubAudio::None, SubAudio::None)
+    } else {
+        (cfg.subaudio_tx, cfg.subaudio_rx)
     }
 }
 
@@ -430,6 +467,17 @@ pub struct App {
     rtone_sounding: bool,
     rtone_self_keyed: bool,
 
+    /// Electric key state while the master side's modulation is `Cw`/`Cwf`;
+    /// `set_ptt` routes to `set_cw_key` instead of the normal voice-PTT
+    /// path in that case.
+    cw_key_down: bool,
+    /// Whether a CW/CWF carrier is currently keyed up, independent of
+    /// `transmitting` (which is voice-PTT specific).
+    cw_tx_active: bool,
+    /// BK-IN=Semi hang countdown after the last key release; `poll_cw_hang`
+    /// ticks it down and drops back to RX at zero.
+    cw_hang_ticks: u16,
+
     ani_caller: Option<[u8; 3]>,
     ani_hold_ticks: u16,
     /// Ticks remaining to show the "NO CHANNELS" overlay after a VFO/Channel
@@ -556,7 +604,7 @@ impl App {
             }
         }
 
-        // Restore each side's last active mode (VFO vs Channel)
+        // Restore each side's last active mode (VFO vs Channel) + modulation
         if let Some(state) = storage.load_channel_state() {
             for (half, s) in sides.iter_mut().enumerate() {
                 let is_channel = state[half * 3] != 0;
@@ -566,14 +614,16 @@ impl App {
                     let ch = storage.read_channel(num);
                     s.load_channel(num, &ch);
                 }
+                s.cfg.modulation = modulation_from_raw(state[6 + half]);
             }
         }
 
         radio.set_frequency(sides[0].cfg.freq_hz);
         radio.set_tx_frequency(sides[0].cfg.tx_freq_hz);
         radio.set_power(sides[0].cfg.power);
-        radio.set_subaudio_tx(sides[0].cfg.subaudio_tx);
-        radio.set_subaudio_rx(sides[0].cfg.subaudio_rx);
+        let (boot_subaudio_tx, boot_subaudio_rx) = cw_safe_subaudio(&sides[0].cfg);
+        radio.set_subaudio_tx(boot_subaudio_tx);
+        radio.set_subaudio_rx(boot_subaudio_rx);
         radio.set_modulation(sides[0].cfg.modulation);
         radio.set_sql_level(syst, settings.sql_level);
         radio.set_tail_elimination(settings.tail_elimination);
@@ -612,6 +662,9 @@ impl App {
             vox_active: false,
             rtone_sounding: false,
             rtone_self_keyed: false,
+            cw_key_down: false,
+            cw_tx_active: false,
+            cw_hang_ticks: 0,
             ani_caller: None,
             ani_hold_ticks: 0,
             no_channels_ticks: 0,
@@ -777,12 +830,13 @@ impl App {
     }
 
     pub fn save_channel_state(&mut self) {
-        let mut buf = [0u8; 6];
+        let mut buf = [0u8; 8];
         for (half, s) in self.sides.iter().enumerate() {
             buf[half * 3] = matches!(s.vfo_chan, ChVfoMode::Channel) as u8;
             let bytes = s.channel_num.to_le_bytes();
             buf[half * 3 + 1] = bytes[0];
             buf[half * 3 + 2] = bytes[1];
+            buf[6 + half] = modulation_to_raw(s.cfg.modulation);
         }
         self.storage.save_channel_state(&buf);
     }
@@ -820,8 +874,9 @@ impl App {
         self.radio.set_frequency(s.cfg.freq_hz);
         self.radio.set_tx_frequency(s.cfg.tx_freq_hz);
         self.radio.set_power(s.cfg.power);
-        self.radio.set_subaudio_tx(s.cfg.subaudio_tx);
-        self.radio.set_subaudio_rx(s.cfg.subaudio_rx);
+        let (subaudio_tx, subaudio_rx) = cw_safe_subaudio(&s.cfg);
+        self.radio.set_subaudio_tx(subaudio_tx);
+        self.radio.set_subaudio_rx(subaudio_rx);
         self.radio.set_modulation(s.cfg.modulation);
     }
 
@@ -987,11 +1042,19 @@ impl App {
     }
 
     fn toggle_modulation(&mut self, syst: &mut SYST) {
+        if self.cw_tx_active {
+            self.radio.enter_rx(syst);
+            self.cw_tx_active = false;
+        }
+        self.cw_hang_ticks = 0;
+        self.cw_key_down = false;
         let s = &mut self.sides[self.master];
         s.cfg.modulation = match s.cfg.modulation {
             Modulation::Fm => Modulation::Am,
             Modulation::Am => Modulation::Usb,
-            Modulation::Usb => Modulation::Fm,
+            Modulation::Usb => Modulation::Cw,
+            Modulation::Cw => Modulation::Cwf,
+            Modulation::Cwf => Modulation::Fm,
         };
         self.sync_watching_to_master(syst);
     }
@@ -1314,6 +1377,13 @@ impl App {
     pub fn set_ptt(&mut self, syst: &mut SYST, pressed: bool) {
         self.note_power_save_activity(syst);
         self.note_backlight_activity();
+        if matches!(
+            self.sides[self.master].cfg.modulation,
+            Modulation::Cw | Modulation::Cwf
+        ) {
+            self.set_cw_key(syst, pressed);
+            return;
+        }
         if pressed && !self.transmitting {
             // Scan/Search/ScanQt all leave normal standby, no TX while
             // in any of them
@@ -1379,15 +1449,96 @@ impl App {
         }
     }
 
+    fn set_cw_key(&mut self, syst: &mut SYST, down: bool) {
+        if self.mode != Mode::Standby {
+            return;
+        }
+        let is_cw = self.sides[self.master].cfg.modulation == Modulation::Cw;
+        if down {
+            self.cw_key_down = true;
+            self.cw_hang_ticks = 0;
+            if !self.cw_tx_active {
+                let want_tx = self.settings.bk_in != 0
+                    && !self.settings.tx_forbid
+                    && !(self.settings.busy_lock && self.radio.rssi_open());
+                if want_tx {
+                    self.watching = self.master;
+                    let s = &self.sides[self.master];
+                    let tx_freq_hz = s.cfg.tx_freq_hz;
+                    let power = s.cfg.power;
+                    self.radio.set_frequency(s.cfg.freq_hz);
+                    self.radio.set_tx_frequency(tx_freq_hz);
+                    self.radio.set_power(power);
+                    self.reload_pa_calibration(tx_freq_hz, power);
+                    self.cw_tx_active = self.radio.enter_tx_keyed(syst);
+                    if self.cw_tx_active {
+                        self.tot_ticks = 0;
+                    }
+                }
+            }
+            if self.cw_tx_active {
+                self.radio.keyed_tone_on(syst, CW_SIDETONE_HZ_DIV_10);
+                if is_cw {
+                    self.radio.cw_carrier_on(syst);
+                }
+            } else {
+                self.radio.sidetone_on(syst, CW_SIDETONE_HZ_DIV_10);
+            }
+        } else {
+            self.cw_key_down = false;
+            if self.cw_tx_active {
+                if is_cw {
+                    self.radio.cw_carrier_off(syst);
+                    self.radio.cw_key_off(syst);
+                } else {
+                    self.radio.keyed_tone_off(syst);
+                }
+                self.cw_hang_ticks = match self.settings.bk_in {
+                    2 => CW_FULL_HANG_TICKS,
+                    1 => CW_SEMI_HANG_TICKS,
+                    _ => 0,
+                };
+            } else {
+                self.radio.sidetone_off(syst);
+            }
+        }
+    }
+
+    /// Raw (undebounced) key-edge poll for CW
+    pub fn poll_cw_key(&mut self, syst: &mut SYST) {
+        let down = self.radio.ptt_asserted();
+        if down != self.cw_key_down {
+            self.set_cw_key(syst, down);
+        }
+    }
+
+    /// BK-IN=Semi's post-release hang timer
+    pub fn poll_cw_hang(&mut self, syst: &mut SYST) {
+        if self.cw_hang_ticks == 0 {
+            return;
+        }
+        self.cw_hang_ticks -= 1;
+        if self.cw_hang_ticks == 0 && !self.cw_key_down {
+            self.radio.enter_rx(syst);
+            self.cw_tx_active = false;
+        }
+    }
+
     // TOT
     pub fn poll_tot(&mut self, syst: &mut SYST) {
-        if !self.transmitting || self.settings.tot_level == 0 {
+        if !self.is_transmitting() || self.settings.tot_level == 0 {
             return;
         }
         self.tot_ticks += 1;
         let limit = self.settings.tot_seconds() * TICKS_PER_SECOND;
         if self.tot_ticks >= limit {
-            self.set_ptt(syst, false);
+            if self.cw_tx_active {
+                self.radio.enter_rx(syst);
+                self.cw_tx_active = false;
+                self.cw_hang_ticks = 0;
+            } else {
+                self.set_ptt(syst, false);
+            }
         }
     }
 
@@ -1396,7 +1547,7 @@ impl App {
         self.mode
     }
     pub fn is_transmitting(&self) -> bool {
-        self.transmitting
+        self.transmitting || self.cw_tx_active
     }
     pub fn tx_prohibited(&self) -> bool {
         self.tx_prohibited
@@ -1565,6 +1716,15 @@ impl App {
     }
     pub fn channel_display_mode(&self) -> ChannelDisplayMode {
         self.channel_display_mode
+    }
+    /// 0=Off, 1=Semi, 2=Full; see `flash_map::Settings::bk_in`.
+    pub fn bk_in(&self) -> u8 {
+        self.settings.bk_in
+    }
+    /// True while a CW/CWF key is physically held down, including
+    /// BK-IN=Off's local-only sidetone
+    pub fn cw_key_down(&self) -> bool {
+        self.cw_key_down
     }
     pub fn set_channel_display_mode(&mut self, mode: ChannelDisplayMode) {
         self.channel_display_mode = mode;

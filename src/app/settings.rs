@@ -36,6 +36,7 @@ pub enum SettingItem {
     Side2Long,
     BandShort,
     BandLong,
+    BkIn,
     BootMode,
     BootSnd,
     BattCal,
@@ -44,7 +45,7 @@ pub enum SettingItem {
     Reset,
 }
 
-pub const SETTINGS_ORDER: [SettingItem; 42] = [
+pub const SETTINGS_ORDER: [SettingItem; 43] = [
     SettingItem::Sql,
     SettingItem::Step,
     SettingItem::Tot,
@@ -81,6 +82,7 @@ pub const SETTINGS_ORDER: [SettingItem; 42] = [
     SettingItem::Side2Long,
     SettingItem::BandShort,
     SettingItem::BandLong,
+    SettingItem::BkIn,
     SettingItem::BootMode,
     SettingItem::BootSnd,
     SettingItem::BattCal,
@@ -128,6 +130,7 @@ impl SettingItem {
             SettingItem::Side2Long => "S2-LG",
             SettingItem::BandShort => "BND-SH",
             SettingItem::BandLong => "BND-LG",
+            SettingItem::BkIn => "BK-IN",
             SettingItem::BootMode => "BOOTSCR",
             SettingItem::BootSnd => "BOOTSND",
             SettingItem::BattCal => "BATCAL",

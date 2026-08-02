@@ -5,7 +5,7 @@ use super::{
     subaudio_index, wrap_step, App, ChVfoMode, Mode, FIRMWARE_VERSION, RTONE_HZ_DIV_10,
     STEP_LIST_DECI_HZ, SUBAUDIO_MAX_INDEX,
 };
-use crate::device::radio::{BandLock, Power, RogerTone, SubAudio};
+use crate::device::radio::{BandLock, Modulation, Power, RogerTone, SubAudio};
 use core::fmt::Write;
 use cortex_m::peripheral::{SCB, SYST};
 
@@ -68,6 +68,7 @@ pub(super) fn current_value(app: &App, item: SettingItem) -> i32 {
         SettingItem::Side2Long => app.settings.side2_long as i32,
         SettingItem::BandShort => app.settings.band_short as i32,
         SettingItem::BandLong => app.settings.band_long as i32,
+        SettingItem::BkIn => app.settings.bk_in as i32,
         SettingItem::BootMode => app.settings.boot_display_mode as i32,
         SettingItem::BootSnd => app.settings.boot_sound_enabled as i32,
         SettingItem::BattCal => app.settings.battery_cal_raw as i32,
@@ -131,6 +132,17 @@ pub(super) fn adjust(app: &mut App, syst: &mut SYST, item: SettingItem, up: bool
         | SettingItem::BandShort
         | SettingItem::BandLong => clamp_step(cur, up, 0, 10),
         SettingItem::FLock => clamp_step(cur, up, 0, 9),
+        // Meaningless (and locked to OFF) while the master side isn't in CW
+        SettingItem::BkIn => {
+            if matches!(
+                app.sides[app.master].cfg.modulation,
+                Modulation::Cw | Modulation::Cwf
+            ) {
+                clamp_step(cur, up, 0, 2)
+            } else {
+                cur
+            }
+        }
         _ => cur,
     };
     apply(app, syst, item, new_val);
@@ -264,6 +276,7 @@ pub(super) fn apply(app: &mut App, syst: &mut SYST, item: SettingItem, v: i32) {
         SettingItem::Side2Long => app.settings.side2_long = v as u8,
         SettingItem::BandShort => app.settings.band_short = v as u8,
         SettingItem::BandLong => app.settings.band_long = v as u8,
+        SettingItem::BkIn => app.settings.bk_in = v as u8,
         SettingItem::BootMode => {
             app.settings.boot_display_mode = v as u8;
             if v == 0 {
@@ -518,6 +531,17 @@ pub fn value_text_for(app: &App, index: usize, item: SettingItem, w: &mut dyn Wr
         SettingItem::FLock => {
             let idx = current_value(app, item).clamp(0, 9) as u8;
             let _ = write!(w, "{}", BandLock::from_u8(idx).label());
+        }
+        SettingItem::BkIn => {
+            let _ = write!(
+                w,
+                "{}",
+                match current_value(app, item) {
+                    1 => "SEMI",
+                    2 => "FULL",
+                    _ => "OFF",
+                }
+            );
         }
         _ => {
             let _ = write!(w, "{}", current_value(app, item));

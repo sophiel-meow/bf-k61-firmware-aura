@@ -3,7 +3,7 @@ use crate::hal::delay;
 use cortex_m::peripheral::SYST;
 use kd32f328_pac::gpiof;
 
-const BIT_DELAY_US: u32 = 5;
+const BIT_DELAY_US: u32 = 1;
 
 const REG_FREQ_LO: u8 = 0x38;
 const REG_FREQ_HI: u8 = 0x39;
@@ -345,6 +345,11 @@ pub enum Modulation {
     Fm,
     Am,
     Usb,
+    /// CW: RX demodulates as USB (beat tone), TX is a bare keyed carrier.
+    Cw,
+    /// CW-over-FM: RX/TX both plain FM, sidetone is what actually
+    /// modulates the carrier
+    Cwf,
 }
 
 /// A tone auto-detected off air by the hardware decoder
@@ -574,6 +579,13 @@ impl<'a> Fd6818<'a> {
         } else {
             self.rx_on(syst);
         }
+    }
+
+    pub fn tx_single_tone_off_idle(&mut self, syst: &mut SYST) {
+        self.write_reg(syst, REG_TONE_FREQ, 0);
+        self.write_reg(syst, REG_TONE_GAIN, 0x0000);
+        self.tone_active = false;
+        self.idle(syst);
     }
 
     /// `REG_TONE_FREQ`/`REG_FSK_BAUD`'s frequency-word encoding when used as
@@ -841,8 +853,8 @@ impl<'a> Fd6818<'a> {
         if state == AfOutState::RxAudio {
             match modulation {
                 Modulation::Am => af_out |= AM_AF_OUT_BIT,
-                Modulation::Usb => af_out |= USB_AF_OUT_BIT,
-                Modulation::Fm => {}
+                Modulation::Usb | Modulation::Cw => af_out |= USB_AF_OUT_BIT,
+                Modulation::Fm | Modulation::Cwf => {}
             }
         }
         self.write_reg(syst, REG_AF_OUT, af_out);
@@ -863,7 +875,7 @@ impl<'a> Fd6818<'a> {
     }
 
     pub fn apply_modulation(&mut self, syst: &mut SYST, modulation: Modulation) {
-        let unknown_3d = if modulation == Modulation::Usb {
+        let unknown_3d = if matches!(modulation, Modulation::Usb | Modulation::Cw) {
             UNKNOWN_3D_USB
         } else {
             UNKNOWN_3D_NORMAL
@@ -871,7 +883,7 @@ impl<'a> Fd6818<'a> {
         self.write_reg(syst, REG_UNKNOWN_3D, unknown_3d);
 
         let afc_disable = self.read_reg(syst, REG_AFC_DISABLE);
-        let afc_disable = if modulation != Modulation::Fm {
+        let afc_disable = if !matches!(modulation, Modulation::Fm | Modulation::Cwf) {
             afc_disable | AFC_DISABLE_BIT
         } else {
             afc_disable & !AFC_DISABLE_BIT

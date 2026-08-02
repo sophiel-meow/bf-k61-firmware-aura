@@ -423,7 +423,11 @@ where
         Modulation::Fm => "FM",
         Modulation::Am => "AM",
         Modulation::Usb => "USB",
+        Modulation::Cw => "CW",
+        Modulation::Cwf => "CWF",
     };
+    let is_cw_master = i == app.master_index()
+        && matches!(app.side_modulation(i), Modulation::Cw | Modulation::Cwf);
     let power = match app.side_power(i) {
         Power::Low => "LOW",
         Power::Mid => "MID",
@@ -441,11 +445,20 @@ where
     };
     let bandwidth = if app.side_wide_band(i) { "WIDE" } else { "NAR" };
     let reversed = if app.side_reversed(i) { "R" } else { "" };
+    let bk_in = if is_cw_master {
+        match app.bk_in() {
+            1 => "BK-SE",
+            2 => "BK-FL",
+            _ => "BK-OF",
+        }
+    } else {
+        ""
+    };
 
     let mut line: TextBuf<32> = TextBuf::new();
     write_spaced_fields(
         &mut line,
-        &[modulation, power, tone, dir, bandwidth, reversed],
+        &[modulation, power, tone, dir, bandwidth, reversed, bk_in],
     );
     Text::new(
         line.as_str(),

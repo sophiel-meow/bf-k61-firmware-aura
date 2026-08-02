@@ -7,17 +7,16 @@ use crate::hal::wear_leveled::WearLeveledRegion;
 const VFO_REGION: WearLeveledRegion<64> = WearLeveledRegion::new(addr::VFO_INFO_ADDR, 16);
 
 /// Global settings record.
-const SETTINGS_REGION: WearLeveledRegion<161> = WearLeveledRegion::new(addr::RADIO_IMFOS_ADDR, 16);
+const SETTINGS_REGION: WearLeveledRegion<163> = WearLeveledRegion::new(addr::RADIO_IMFOS_ADDR, 16);
 
 /// FM broadcast channel list: 30 slots x u16 (little-endian deci-MHz).
 const FM_PAYLOAD_LEN: usize = flash_map::FM_CHANNEL_COUNT * 2;
 const FM_REGION: WearLeveledRegion<FM_PAYLOAD_LEN> = WearLeveledRegion::new(addr::FM_ADDR, 16);
 
-/// Per-side last active VFO/Channel mode + selected channel number: 3
-/// bytes/side (1 mode byte + little-endian `u16` channel number), written
-/// once right before power-off so the radio resumes in the same mode/
-/// channel on next boot.
-const CHANNEL_STATE_REGION: WearLeveledRegion<6> = WearLeveledRegion::new(addr::SYSTEMRAN_ADDR, 16);
+/// Per-side last active VFO/Channel mode + selected channel number +
+/// modulation: bytes `half*3..half*3+3` are 1 mode byte + little-endian
+/// `u16` channel number, bytes `6+half` are the side's `Modulation` raw
+const CHANNEL_STATE_REGION: WearLeveledRegion<8> = WearLeveledRegion::new(addr::SYSTEMRAN_ADDR, 16);
 
 pub struct Storage {
     norflash: NorFlash<'static>,
@@ -76,11 +75,11 @@ impl Storage {
     }
 
     // channel/VFO mode state
-    pub fn load_channel_state(&mut self) -> Option<[u8; 6]> {
+    pub fn load_channel_state(&mut self) -> Option<[u8; 8]> {
         CHANNEL_STATE_REGION.load(&mut self.norflash)
     }
 
-    pub fn save_channel_state(&mut self, buf: &[u8; 6]) {
+    pub fn save_channel_state(&mut self, buf: &[u8; 8]) {
         CHANNEL_STATE_REGION.save(&mut self.norflash, buf);
     }
 

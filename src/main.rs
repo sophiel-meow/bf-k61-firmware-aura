@@ -265,8 +265,13 @@ fn main() -> ! {
             writeln!(dbg, "batt bars: {}", app.battery_bars()).ok();
         }
 
-        // PTT
-        if let Some(level) = app.radio_mut().poll_ptt() {
+        // PTT / CW key. CW bypasses the voice-PTT debouncer entirely
+        if matches!(
+            app.side_modulation(app.master_index()),
+            Modulation::Cw | Modulation::Cwf
+        ) {
+            app.poll_cw_key(&mut cp.SYST);
+        } else if let Some(level) = app.radio_mut().poll_ptt() {
             app.set_ptt(&mut cp.SYST, !level);
             if app.is_transmitting() {
                 writeln!(dbg, "TX ON  @ {} Hz (low power)", app.master_freq_hz()).ok();
@@ -276,6 +281,7 @@ fn main() -> ! {
         }
 
         app.poll_tot(&mut cp.SYST);
+        app.poll_cw_hang(&mut cp.SYST);
         app.poll_backlight();
         app.poll_chanmgr_name_timeout();
         app.poll_contacts_name_timeout();
@@ -317,8 +323,7 @@ fn main() -> ! {
             }
         }
 
-        // RX path
-        if !app.is_transmitting() {
+        if !app.is_transmitting() && !app.cw_key_down() {
             if !app.power_save_is_asleep() {
                 app.poll_squelch(&mut cp.SYST, 3);
                 app.poll_dual_standby(&mut cp.SYST, app.rssi_open());

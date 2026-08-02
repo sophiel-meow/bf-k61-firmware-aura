@@ -502,6 +502,9 @@ pub struct Settings {
     /// (0..=9). Applied to `Radio::set_tx_allowed` on boot and whenever
     /// changed in Settings; RX is never restricted by this.
     pub band_lock: u8,
+    /// Break-in behavior while the master side's modulation is CW/CWF
+    /// 0 = off, 1 = semi, 2 = full
+    pub bk_in: u8,
 }
 
 impl Settings {
@@ -541,9 +544,10 @@ impl Settings {
         boot_tune: [(0, 0); 48],
         battery_cal_raw: 2731,
         band_lock: 0, // CE & CN
+        bk_in: 0,
     };
 
-    pub fn from_bytes(buf: &[u8; 161]) -> Settings {
+    pub fn from_bytes(buf: &[u8; 163]) -> Settings {
         let mut boot_text_line1 = [0u8; 16];
         boot_text_line1.copy_from_slice(&buf[30..46]);
         let mut boot_text_line2 = [0u8; 16];
@@ -589,11 +593,12 @@ impl Settings {
             boot_tune,
             battery_cal_raw: u16::from_le_bytes([buf[158], buf[159]]),
             band_lock: buf[160].min(9),
+            bk_in: buf[162].min(2),
         }
     }
 
-    pub fn to_bytes(&self) -> [u8; 161] {
-        let mut buf = [0u8; 161];
+    pub fn to_bytes(&self) -> [u8; 163] {
+        let mut buf = [0u8; 163];
         buf[0] = self.sql_level;
         buf[1] = self.tail_elimination as u8;
         buf[2] = self.busy_lock as u8;
@@ -632,6 +637,7 @@ impl Settings {
         }
         buf[158..160].copy_from_slice(&self.battery_cal_raw.to_le_bytes());
         buf[160] = self.band_lock;
+        buf[162] = self.bk_in;
         buf
     }
 

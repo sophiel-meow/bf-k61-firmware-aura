@@ -11,6 +11,7 @@ use super::{
 };
 use super::{scan, scanqt, search};
 use crate::device::keypad::{KeyEvent, KeyEventKind, KeyId};
+use crate::device::radio::Modulation;
 use cortex_m::peripheral::SYST;
 
 // top-level dispatch
@@ -112,7 +113,11 @@ fn dispatch_standby(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
                 KeyId::Exit => app.input.clear(),
                 KeyId::Vm => app.toggle_vfo_channel(syst),
                 KeyId::Ab => app.switch_side(syst),
-                KeyId::Asterisk => app.dtmf_dial = Some(DigitInput::new()),
+                // DTMF dialing doesn't make sense while keying CW (no mic
+                // audio path at all in that mode); CWF still has one.
+                KeyId::Asterisk if app.sides[app.master].cfg.modulation != Modulation::Cw => {
+                    app.dtmf_dial = Some(DigitInput::new())
+                }
                 KeyId::Menu => {
                     if app.sides[app.master].vfo_chan == ChVfoMode::Channel && app.input.len > 0 {
                         app.commit_input(syst);

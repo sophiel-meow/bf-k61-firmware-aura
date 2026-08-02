@@ -694,6 +694,44 @@ impl Radio {
         self.fd6818.set_scramble(syst, self.scramble_level);
     }
 
+    /// Local-only sidetone
+    pub fn sidetone_on(&mut self, syst: &mut SYST, hz_div_10: u16) {
+        self.fd6818.tx_single_tone_on(syst, hz_div_10, false);
+        board::set_speaker_switch(self.gpiob, true);
+    }
+
+    pub fn sidetone_off(&mut self, syst: &mut SYST) {
+        board::set_speaker_switch(self.gpiob, false);
+        self.fd6818.tx_single_tone_off(syst, false);
+        self.fd6818.set_scramble(syst, self.scramble_level);
+    }
+
+    /// Sidetone while a CW/CWF carrier is already keyed
+    pub fn keyed_tone_on(&mut self, syst: &mut SYST, hz_div_10: u16) {
+        self.fd6818.tx_single_tone_on(syst, hz_div_10, true);
+        board::set_speaker_switch(self.gpiob, true);
+    }
+
+    pub fn keyed_tone_off(&mut self, syst: &mut SYST) {
+        board::set_speaker_switch(self.gpiob, false);
+        self.fd6818.tx_single_tone_off(syst, true);
+        self.fd6818.set_scramble(syst, self.scramble_level);
+    }
+
+    pub fn cw_carrier_off(&mut self, syst: &mut SYST) {
+        self.fd6818.pa_off(syst);
+    }
+
+    pub fn cw_carrier_on(&mut self, syst: &mut SYST) {
+        self.fd6818.pa_enable(syst, self.cfg.power);
+    }
+
+    pub fn cw_key_off(&mut self, syst: &mut SYST) {
+        board::set_speaker_switch(self.gpiob, false);
+        self.fd6818.tx_single_tone_off_idle(syst);
+        self.fd6818.set_scramble(syst, self.scramble_level);
+    }
+
     pub fn toggle_monitor(&mut self) {
         self.monitor = !self.monitor;
     }
@@ -778,7 +816,7 @@ impl Radio {
         self.fd6818.set_tx_band_off(syst);
         self.fd6818.power_rx(syst);
         self.fd6818.set_scramble(syst, self.scramble_level);
-        let tuned_freq_hz = if self.cfg.modulation == Modulation::Usb {
+        let tuned_freq_hz = if matches!(self.cfg.modulation, Modulation::Usb | Modulation::Cw) {
             self.cfg.freq_hz.saturating_add_signed(self.rit_offset_hz)
         } else {
             self.cfg.freq_hz
@@ -829,6 +867,33 @@ impl Radio {
         self.fd6818.set_subaudio_tx(syst, self.cfg.subaudio_tx);
         self.fd6818.set_scramble(syst, self.scramble_level);
         self.fd6818.apply_tx_mic_gain(syst);
+        self.fd6818.tx_on(syst);
+        self.fd6818.pa_enable(syst, self.cfg.power);
+        match self.band() {
+            Band::Uhf => self.fd6818.set_tx_band_uhf(syst),
+            Band::Vhf => self.fd6818.set_tx_band_vhf(syst),
+        }
+        self.fd6818.set_tx_led(syst, true);
+        self.tx_state = true;
+        true
+    }
+
+    /// Bare-carrier TX for CW/CWF keying: no mic audio, no subaudio tone
+    /// baked into the carrier
+    pub fn enter_tx_keyed(&mut self, syst: &mut SYST) -> bool {
+        if !self.tx_allowed.allows(self.cfg.tx_freq_hz)
+            || !matches!(self.cfg.modulation, Modulation::Cw | Modulation::Cwf)
+        {
+            return false;
+        }
+        board::set_speaker_switch(self.gpiob, false);
+        self.fd6818.rf_off(syst);
+        board::set_rx_band_off(self.gpioa);
+        self.fd6818.idle(syst);
+        self.fd6818.wake(syst);
+        self.fd6818.set_frequency_hz(syst, self.cfg.tx_freq_hz);
+        self.fd6818.set_wide_bandwidth(syst, self.cfg.wide_band);
+        self.fd6818.set_scramble(syst, self.scramble_level);
         self.fd6818.tx_on(syst);
         self.fd6818.pa_enable(syst, self.cfg.power);
         match self.band() {
