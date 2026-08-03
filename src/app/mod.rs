@@ -2,7 +2,9 @@ mod aprs_ops;
 mod ax25;
 mod chanmgr;
 mod contacts;
+mod convert;
 mod fm;
+mod input;
 mod keyfn;
 mod keys;
 mod launcher;
@@ -13,11 +15,16 @@ mod search;
 mod settings;
 mod settings_ops;
 mod side;
+mod side_ops;
 mod spectrum;
+mod tx;
+
+use convert::*;
+use input::*;
 
 use crate::device::flashlight::Flashlight;
 use crate::device::fm_radio::FmRadio;
-use crate::device::keypad::{KeyId, Keypad};
+use crate::device::keypad::Keypad;
 use crate::device::radio::{
     BandLock, ChannelConfig, Modulation, Power, Radio, RogerTone, SubAudio,
 };
@@ -124,349 +131,6 @@ pub enum ChannelDisplayMode {
     NameFreq,
 }
 
-fn channel_display_mode_from_u8(v: u8) -> ChannelDisplayMode {
-    match v {
-        1 => ChannelDisplayMode::Name,
-        2 => ChannelDisplayMode::NameFreq,
-        _ => ChannelDisplayMode::Frequency,
-    }
-}
-
-fn channel_name_str(raw: &[u8; 12]) -> &str {
-    let end = raw
-        .iter()
-        .position(|&b| b == 0x00 || b == 0xFF)
-        .unwrap_or(raw.len());
-    core::str::from_utf8(&raw[..end]).unwrap_or("")
-}
-
-// conversion helpers
-fn subaudio_from_code(code: u16) -> SubAudio {
-    match flash_map::SubaudioCode::decode(code) {
-        flash_map::SubaudioCode::None => SubAudio::None,
-        flash_map::SubaudioCode::Ctcss(t) => SubAudio::Ctcss(t),
-        flash_map::SubaudioCode::DcsNormal(idx) => dcs_from_table_index(idx, false),
-        flash_map::SubaudioCode::DcsInverted(idx) => dcs_from_table_index(idx - 105, true),
-    }
-}
-
-fn dcs_from_table_index(idx: u16, inverted: bool) -> SubAudio {
-    match settings::DCS_TABLE.get((idx as usize).wrapping_sub(1)) {
-        Some(&code) => SubAudio::Dcs { code, inverted },
-        None => SubAudio::None,
-    }
-}
-
-fn power_from_raw(tx_power: u8) -> Power {
-    match tx_power {
-        1 => Power::Low,
-        2 => Power::Mid,
-        _ => Power::High,
-    }
-}
-
-fn power_to_raw(power: Power) -> u8 {
-    match power {
-        Power::High => 0,
-        Power::Low => 1,
-        Power::Mid => 2,
-    }
-}
-
-fn modulation_from_raw(raw: u8) -> Modulation {
-    match raw {
-        1 => Modulation::Am,
-        2 => Modulation::Usb,
-        3 => Modulation::Cw,
-        4 => Modulation::Cwf,
-        _ => Modulation::Fm,
-    }
-}
-
-fn modulation_to_raw(modulation: Modulation) -> u8 {
-    match modulation {
-        Modulation::Fm => 0,
-        Modulation::Am => 1,
-        Modulation::Usb => 2,
-        Modulation::Cw => 3,
-        Modulation::Cwf => 4,
-    }
-}
-
-fn digit_value(key: KeyId) -> Option<u8> {
-    Some(match key {
-        KeyId::Digit0 => 0,
-        KeyId::Digit1 => 1,
-        KeyId::Digit2 => 2,
-        KeyId::Digit3 => 3,
-        KeyId::Digit4 => 4,
-        KeyId::Digit5 => 5,
-        KeyId::Digit6 => 6,
-        KeyId::Digit7 => 7,
-        KeyId::Digit8 => 8,
-        KeyId::Digit9 => 9,
-        _ => return None,
-    })
-}
-
-fn subaudio_to_code(sub: SubAudio) -> u16 {
-    match sub {
-        SubAudio::None => 0,
-        SubAudio::Ctcss(t) => t,
-        SubAudio::Dcs { code, inverted } => match settings::dcs_index(code) {
-            Some(i) => {
-                let one_based = i as u16 + 1;
-                if inverted {
-                    one_based + 105
-                } else {
-                    one_based
-                }
-            }
-            None => 0,
-        },
-    }
-}
-
-const SUBAUDIO_MAX_INDEX: i32 =
-    (settings::CTCSS_TABLE.len() + 2 * settings::DCS_TABLE.len() - 1) as i32;
-
-fn subaudio_from_index(v: i32) -> SubAudio {
-    if v < 0 {
-        return SubAudio::None;
-    }
-    let v = v as usize;
-    if v < settings::CTCSS_TABLE.len() {
-        return SubAudio::Ctcss(settings::CTCSS_TABLE[v]);
-    }
-    let dcs_v = v - settings::CTCSS_TABLE.len();
-    if dcs_v < settings::DCS_TABLE.len() {
-        SubAudio::Dcs {
-            code: settings::DCS_TABLE[dcs_v],
-            inverted: false,
-        }
-    } else {
-        let inv_v = (dcs_v - settings::DCS_TABLE.len()).min(settings::DCS_TABLE.len() - 1);
-        SubAudio::Dcs {
-            code: settings::DCS_TABLE[inv_v],
-            inverted: true,
-        }
-    }
-}
-
-fn subaudio_index(sub: SubAudio) -> i32 {
-    match sub {
-        SubAudio::None => -1,
-        SubAudio::Ctcss(hz) => match settings::ctcss_index(Some(hz)) {
-            Some(i) => i as i32,
-            None => -1,
-        },
-        SubAudio::Dcs { code, inverted } => match settings::dcs_index(code) {
-            Some(i) => {
-                let base = settings::CTCSS_TABLE.len()
-                    + if inverted {
-                        settings::DCS_TABLE.len()
-                    } else {
-                        0
-                    };
-                (base + i) as i32
-            }
-            None => -1,
-        },
-    }
-}
-
-/// CW's TX chain never writes subaudio registers
-fn cw_safe_subaudio(cfg: &ChannelConfig) -> (SubAudio, SubAudio) {
-    if cfg.modulation == Modulation::Cw {
-        (SubAudio::None, SubAudio::None)
-    } else {
-        (cfg.subaudio_tx, cfg.subaudio_rx)
-    }
-}
-
-fn map(x: i32, in_min: i32, in_max: i32, out_min: i32, out_max: i32) -> i32 {
-    (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
-}
-
-fn clamp_step(cur: i32, up: bool, lo: i32, hi: i32) -> i32 {
-    if up {
-        (cur + 1).min(hi)
-    } else {
-        (cur - 1).max(lo)
-    }
-}
-
-fn wrap_step(cur: i32, up: bool, lo: i32, hi: i32) -> i32 {
-    if up {
-        if cur >= hi {
-            lo
-        } else {
-            cur + 1
-        }
-    } else if cur <= lo {
-        hi
-    } else {
-        cur - 1
-    }
-}
-
-// InputBuf
-
-struct InputBuf {
-    digits: [u8; VFO_INPUT_DIGITS],
-    len: usize,
-}
-
-impl InputBuf {
-    const fn new() -> Self {
-        InputBuf {
-            digits: [0; VFO_INPUT_DIGITS],
-            len: 0,
-        }
-    }
-    fn clear(&mut self) {
-        self.len = 0;
-    }
-    fn push(&mut self, digit: u8) {
-        if self.len < self.digits.len() {
-            self.digits[self.len] = digit;
-            self.len += 1;
-        }
-    }
-    fn value(&self) -> u32 {
-        self.digits[..self.len]
-            .iter()
-            .fold(0u32, |acc, &d| acc * 10 + d as u32)
-    }
-}
-
-struct DigitInput<const N: usize> {
-    digits: [u8; N],
-    len: usize,
-}
-
-impl<const N: usize> DigitInput<N> {
-    const fn new() -> Self {
-        DigitInput {
-            digits: [0; N],
-            len: 0,
-        }
-    }
-    fn clear(&mut self) {
-        self.len = 0;
-    }
-    fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-    fn is_full(&self) -> bool {
-        self.len == N
-    }
-    fn push(&mut self, digit: u8) {
-        if self.len < N {
-            self.digits[self.len] = digit;
-            self.len += 1;
-        }
-    }
-    fn backspace(&mut self) {
-        self.len = self.len.saturating_sub(1);
-    }
-    /// The full `N`-digit decimal value, untyped trailing digits as `0`.
-    fn value(&self) -> u32 {
-        let mut v: u32 = 0;
-        for i in 0..N {
-            let d = if i < self.len {
-                self.digits[i] as u32
-            } else {
-                0
-            };
-            v = v * 10 + d;
-        }
-        v
-    }
-    /// `int_digits` is how many leading digits sit before the decimal point.
-    fn write_display(&self, int_digits: usize, w: &mut dyn core::fmt::Write) {
-        for i in 0..N {
-            if i == int_digits {
-                let _ = w.write_char('.');
-            }
-            if i < self.len {
-                let _ = write!(w, "{}", self.digits[i]);
-            } else {
-                let _ = w.write_char('-');
-            }
-        }
-    }
-}
-
-pub(super) fn ddmm_to_microdeg(ddmm: u32, _is_lat: bool) -> i32 {
-    let deg = ddmm / 10_000;
-    let min_frac_total = ddmm % 10_000; // MM * 100 + mm
-    let frac_microdeg = (min_frac_total as u64 * 100 / 6) as u32;
-    (deg * 100_000 + frac_microdeg) as i32
-}
-
-pub(super) fn microdeg_to_ddmm(microdeg: i32, _is_lat: bool) -> u32 {
-    let v = microdeg.unsigned_abs();
-    let deg = v / 100_000;
-    let frac = v % 100_000;
-    let hundredths = (frac as u64 * 6 / 100) as u32; // 0..5999
-    deg * 10_000 + hundredths
-}
-
-// SettingsUi
-struct SettingsUi {
-    index: usize,
-    editing: bool,
-    snapshot: i32,
-    info_page: u8,
-    offset_input: DigitInput<7>,
-    /// Digit entry for BATCAL: user types the multimeter-measured battery
-    /// voltage (1 integer digit + 2 decimals, e.g. "742" = 7.42V) instead of
-    /// adjusting the raw ADC calibration value directly with Up/Down.
-    battery_input: DigitInput<3>,
-    /// T9 text editor for APRS callsign (max 6 chars).
-    aprs_call_edit: name_edit::NameEdit<6>,
-    /// T9 text editor for APRS device model name (max 6 chars).
-    aprs_dev_name_edit: name_edit::NameEdit<6>,
-    /// T9 text editor for APRS custom comment (max 16 chars).
-    aprs_comment_edit: name_edit::NameEdit<16>,
-    /// Digit entry for APRS TX frequency: 6 digits (XXX.XXX MHz).
-    aprs_freq_input: DigitInput<6>,
-    /// Digit entry for APRS latitude: DDMM.mm
-    aprs_lat_input: DigitInput<6>,
-    /// Digit entry for APRS longitude: DDDMM.mm
-    aprs_lon_input: DigitInput<7>,
-    /// Hemisphere for latitude: false = N, true = S.
-    aprs_lat_neg: bool,
-    /// Hemisphere for longitude: false = E, true = W.
-    aprs_lon_neg: bool,
-}
-
-impl SettingsUi {
-    const fn new() -> Self {
-        SettingsUi {
-            index: 0,
-            editing: false,
-            snapshot: 0,
-            info_page: 0,
-            offset_input: DigitInput::new(),
-            battery_input: DigitInput::new(),
-            aprs_call_edit: name_edit::NameEdit::blank(),
-            aprs_dev_name_edit: name_edit::NameEdit::blank(),
-            aprs_comment_edit: name_edit::NameEdit::blank(),
-            aprs_freq_input: DigitInput::new(),
-            aprs_lat_input: DigitInput::new(),
-            aprs_lon_input: DigitInput::new(),
-            aprs_lat_neg: false,
-            aprs_lon_neg: false,
-        }
-    }
-
-    fn is_editing(&self, index: usize) -> bool {
-        self.editing && self.index == index
-    }
-}
-
 pub struct App {
     pub radio: Radio,
     keypad: Keypad,
@@ -475,7 +139,7 @@ pub struct App {
     mode: Mode,
     sides: [side::Side; 2],
     settings: flash_map::Settings,
-    settings_ui: SettingsUi,
+    settings_ui: settings::SettingsUi,
     chanmgr: chanmgr::ChanMgrUi,
     contacts: contacts::ContactsUi,
     launcher_index: usize,
@@ -681,7 +345,7 @@ impl App {
             mode: Mode::Standby,
             sides,
             settings,
-            settings_ui: SettingsUi::new(),
+            settings_ui: settings::SettingsUi::new(),
             chanmgr: chanmgr::ChanMgrUi::new(),
             contacts: contacts::ContactsUi::new(),
             launcher_index: 0,
@@ -885,239 +549,62 @@ impl App {
         self.storage.save_channel_state(&buf);
     }
 
-    fn load_channel_num(&mut self, num: u16) {
-        let ch = self.storage.read_channel(num);
-        self.sides[self.master].load_channel(num, &ch);
-        self.ani_target_override = None;
-    }
-
     pub(super) fn refresh_channel_display(&mut self, num: u16) {
-        for i in 0..self.sides.len() {
-            let showing =
-                self.sides[i].vfo_chan == ChVfoMode::Channel && self.sides[i].channel_num == num;
-            if !showing {
-                continue;
-            }
-            if self.storage.is_channel_empty(num) {
-                if let Some(next) = self.find_programmed_channel(num, true) {
-                    let ch = self.storage.read_channel(next);
-                    self.sides[i].load_channel(next, &ch);
-                }
-            } else {
-                let ch = self.storage.read_channel(num);
-                self.sides[i].load_channel(num, &ch);
-            }
-        }
+        side_ops::refresh_channel_display(self, num);
     }
 
-    // radio sync
-    /// Pushes `sides[watching]`'s config into `Radio`'s cache without
-    /// touching hardware
-    fn push_watching_config(&mut self) {
-        let s = &self.sides[self.watching];
-        self.radio.set_frequency(s.cfg.freq_hz);
-        self.radio.set_tx_frequency(s.cfg.tx_freq_hz);
-        self.radio.set_power(s.cfg.power);
-        let (subaudio_tx, subaudio_rx) = cw_safe_subaudio(&s.cfg);
-        self.radio.set_subaudio_tx(subaudio_tx);
-        self.radio.set_subaudio_rx(subaudio_rx);
-        self.radio.set_modulation(s.cfg.modulation);
-    }
-
-    fn apply_watching_to_radio(&mut self, syst: &mut SYST) {
-        self.push_watching_config();
-        if !self.transmitting {
-            self.radio.enter_rx(syst);
-        }
+    fn load_channel_num(&mut self, num: u16) {
+        side_ops::load_channel_num(self, num);
     }
 
     fn sync_watching_to_master(&mut self, syst: &mut SYST) {
-        self.watching = self.master;
-        self.apply_watching_to_radio(syst);
+        side_ops::sync_watching_to_master(self, syst);
+    }
+
+    // radio sync
+    fn push_watching_config(&mut self) {
+        side_ops::push_watching_config(self);
+    }
+
+    fn apply_watching_to_radio(&mut self, syst: &mut SYST) {
+        side_ops::apply_watching_to_radio(self, syst);
     }
 
     // frequency / channel stepping
     fn step(&mut self, syst: &mut SYST, up: bool) {
-        let s = &mut self.sides[self.master];
-        match s.vfo_chan {
-            ChVfoMode::Vfo => {
-                let step_hz = s.step_deci_hz() * 10;
-                s.rx_freq_hz = if up {
-                    s.rx_freq_hz.saturating_add(step_hz)
-                } else {
-                    s.rx_freq_hz.saturating_sub(step_hz)
-                };
-                s.refresh_cfg_freqs();
-                self.save_vfo();
-            }
-            ChVfoMode::Channel => {
-                let current = s.channel_num;
-                if let Some(next) = self.find_programmed_channel(current, up) {
-                    self.load_channel_num(next);
-                }
-            }
-        }
-        self.sync_watching_to_master(syst);
-    }
-
-    fn find_programmed_channel(&mut self, from: u16, up: bool) -> Option<u16> {
-        let mut num = from;
-        for _ in 0..=MAX_CHANNEL_NUM {
-            num = if up {
-                if num >= MAX_CHANNEL_NUM {
-                    0
-                } else {
-                    num + 1
-                }
-            } else if num == 0 {
-                MAX_CHANNEL_NUM
-            } else {
-                num - 1
-            };
-            if !self.storage.is_channel_empty(num) {
-                return Some(num);
-            }
-        }
-        None
+        side_ops::step(self, syst, up);
     }
 
     fn commit_input(&mut self, syst: &mut SYST) {
-        let value = self.input.value();
-        match self.sides[self.master].vfo_chan {
-            ChVfoMode::Channel => {
-                if value <= MAX_CHANNEL_NUM as u32 && !self.storage.is_channel_empty(value as u16) {
-                    self.load_channel_num(value as u16);
-                    self.sync_watching_to_master(syst);
-                }
-            }
-            ChVfoMode::Vfo => {
-                let s = &mut self.sides[self.master];
-                // `value` is 6 digits of kHz (`"xxx.xxx"` with the dot
-                // implied); `* 1000` converts to Hz.
-                s.rx_freq_hz = value * 1000;
-                s.refresh_cfg_freqs();
-                self.save_vfo();
-                self.sync_watching_to_master(syst);
-            }
-        }
-        self.input.clear();
+        side_ops::commit_input(self, syst);
     }
 
     fn toggle_vfo_channel(&mut self, syst: &mut SYST) {
-        let s = &mut self.sides[self.master];
-        match s.vfo_chan {
-            ChVfoMode::Vfo => {
-                s.vfo_backup = side::VfoBackup {
-                    rx_freq_hz: s.rx_freq_hz,
-                    freq_dir: s.freq_dir,
-                    offset_hz: s.offset_hz,
-                    wide_band: s.cfg.wide_band,
-                    power: s.cfg.power,
-                    subaudio_tx: s.cfg.subaudio_tx,
-                    subaudio_rx: s.cfg.subaudio_rx,
-                    ani_target: s.ani_target,
-                };
-                let num = s.channel_num;
-                // The last-selected channel number may not actually be
-                // programmed, land on the nearest real one instead of showing
-                // garbage decoded from erased flash.
-                // If nothing is programmed at all, stay put rather than
-                // switching into a channel that doesn't exist.
-                let num = if self.storage.is_channel_empty(num) {
-                    self.find_programmed_channel(num, true)
-                } else {
-                    Some(num)
-                };
-                if let Some(num) = num {
-                    self.load_channel_num(num);
-                } else {
-                    self.no_channels_ticks = NO_CHANNELS_HOLD_TICKS;
-                }
-            }
-            ChVfoMode::Channel => {
-                let backup = s.vfo_backup;
-                s.vfo_chan = ChVfoMode::Vfo;
-                s.name = [0; 12];
-                s.rx_freq_hz = backup.rx_freq_hz;
-                s.freq_dir = backup.freq_dir;
-                s.offset_hz = backup.offset_hz;
-                s.cfg.wide_band = backup.wide_band;
-                s.cfg.power = backup.power;
-                s.cfg.subaudio_tx = backup.subaudio_tx;
-                s.cfg.subaudio_rx = backup.subaudio_rx;
-                s.ani_target = backup.ani_target;
-                s.refresh_cfg_freqs();
-            }
-        }
-
-        self.input.clear();
-        self.ani_target_override = None;
-        self.sync_watching_to_master(syst);
+        side_ops::toggle_vfo_channel(self, syst);
     }
 
     fn switch_side(&mut self, syst: &mut SYST) {
-        self.master = 1 - self.master;
-        self.input.clear();
-        self.ani_target_override = None;
-        self.sync_watching_to_master(syst);
+        side_ops::switch_side(self, syst);
     }
 
     fn toggle_reverse(&mut self, syst: &mut SYST) {
-        let s = &mut self.sides[self.master];
-        s.reversed = !s.reversed;
-        s.refresh_cfg_freqs();
-        self.sync_watching_to_master(syst);
+        side_ops::toggle_reverse(self, syst);
     }
 
     fn toggle_power(&mut self, syst: &mut SYST) {
-        let s = &mut self.sides[self.master];
-        s.cfg.power = match s.cfg.power {
-            Power::High => Power::Low,
-            Power::Low => Power::Mid,
-            Power::Mid => Power::High,
-        };
-        self.sync_watching_to_master(syst);
+        side_ops::toggle_power(self, syst);
     }
 
     fn toggle_wide_narrow(&mut self, syst: &mut SYST) {
-        let s = &mut self.sides[self.master];
-        s.cfg.wide_band = !s.cfg.wide_band;
-        self.commit_side_change(syst);
+        side_ops::toggle_wide_narrow(self, syst);
     }
 
     fn toggle_modulation(&mut self, syst: &mut SYST) {
-        if self.cw_tx_active {
-            self.radio.enter_rx(syst);
-            self.cw_tx_active = false;
-        }
-        self.cw_hang_ticks = 0;
-        self.cw_key_down = false;
-        let s = &mut self.sides[self.master];
-        s.cfg.modulation = match s.cfg.modulation {
-            Modulation::Fm => Modulation::Am,
-            Modulation::Am => Modulation::Usb,
-            Modulation::Usb => Modulation::Cw,
-            Modulation::Cw => Modulation::Cwf,
-            Modulation::Cwf => Modulation::Fm,
-        };
-        self.sync_watching_to_master(syst);
+        side_ops::toggle_modulation(self, syst);
     }
 
     fn commit_side_change(&mut self, syst: &mut SYST) {
-        self.sides[self.master].refresh_cfg_freqs();
-        if matches!(self.sides[self.master].vfo_chan, ChVfoMode::Vfo) {
-            self.save_vfo();
-        }
-        self.sync_watching_to_master(syst);
-    }
-
-    fn resolve_ani_target(&mut self) -> Option<[u8; 3]> {
-        if let Some(id) = self.ani_target_override {
-            return Some(id);
-        }
-        let idx = self.sides[self.master].ani_target?;
-        let contact = self.storage.read_contact(idx);
-        (!contact.is_empty()).then(|| contact.id())
+        side_ops::commit_side_change(self, syst);
     }
 
     // auto-lock
@@ -1484,181 +971,26 @@ impl App {
     }
 
     fn set_ani_target_override(&mut self, id: [u8; 3]) {
-        self.ani_target_override = Some(id);
+        tx::set_ani_target_override(self, id);
     }
 
     // PTT
-    fn reload_pa_calibration(&mut self, tx_freq_hz: u32, power: Power) {
-        self.radio
-            .apply_pa_calibration(&mut self.storage, tx_freq_hz, power);
-    }
-
     pub fn set_ptt(&mut self, syst: &mut SYST, pressed: bool) {
-        self.note_power_save_activity(syst);
-        self.note_backlight_activity();
-        if matches!(
-            self.sides[self.master].cfg.modulation,
-            Modulation::Cw | Modulation::Cwf
-        ) {
-            self.set_cw_key(syst, pressed);
-            return;
-        }
-        if pressed && !self.transmitting {
-            // Scan/Search/ScanQt all leave normal standby, no TX while
-            // in any of them
-            if self.mode != Mode::Standby {
-                return;
-            }
-            if self.settings.tx_forbid {
-                return;
-            }
-            if self.settings.busy_lock && self.radio.rssi_open() {
-                return;
-            }
-
-            self.watching = self.master;
-            let s = &self.sides[self.master];
-            let tx_freq_hz = s.cfg.tx_freq_hz;
-            let power = s.cfg.power;
-            self.radio.set_frequency(s.cfg.freq_hz);
-            self.radio.set_tx_frequency(tx_freq_hz);
-            self.radio.set_power(power);
-            self.radio.set_subaudio_tx(s.cfg.subaudio_tx);
-            self.radio.set_subaudio_rx(s.cfg.subaudio_rx);
-            self.radio.set_modulation(s.cfg.modulation);
-            self.reload_pa_calibration(tx_freq_hz, power);
-            if self.radio.enter_tx(syst) {
-                self.transmitting = true;
-                self.tot_ticks = 0;
-                self.tx_prohibited = false;
-                if let Some(dial) = self.dtmf_dial.take() {
-                    let digits = &dial.digits[..dial.len];
-                    if dial.len == 3 {
-                        let target = [digits[0], digits[1], digits[2]];
-                        self.ani_target_override = Some(target);
-                        self.radio.send_ani(syst, target);
-                    } else if dial.len > 0 {
-                        self.radio.send_dtmf_digits(syst, digits);
-                    }
-                } else if self.settings.ani_tx {
-                    if let Some(target) = self.resolve_ani_target() {
-                        self.radio.send_ani(syst, target);
-                    }
-                }
-            } else {
-                self.tx_prohibited = true;
-            }
-        } else if pressed {
-            self.vox_active = false;
-            self.vox_work_dly = 0;
-        } else {
-            // PTT released.
-            self.tx_prohibited = false;
-            if self.transmitting {
-                self.transmitting = false;
-                if self.rtone_sounding {
-                    self.rtone_sounding = false;
-                }
-                self.radio.end_tx(syst);
-                self.dual_hold_ticks = DUAL_STANDBY_HOLD_TICKS;
-                self.vox_det_dly = VOX_HOLD_AFTER_PTT_TICKS;
-                self.vox_work_dly = 0;
-                self.vox_active = false;
-            }
-        }
+        tx::set_ptt(self, syst, pressed);
     }
 
-    fn set_cw_key(&mut self, syst: &mut SYST, down: bool) {
-        if self.mode != Mode::Standby {
-            return;
-        }
-        let is_cw = self.sides[self.master].cfg.modulation == Modulation::Cw;
-        if down {
-            self.cw_key_down = true;
-            self.cw_hang_ticks = 0;
-            if !self.cw_tx_active {
-                let want_tx = self.settings.bk_in != 0
-                    && !self.settings.tx_forbid
-                    && !(self.settings.busy_lock && self.radio.rssi_open());
-                if want_tx {
-                    self.watching = self.master;
-                    let s = &self.sides[self.master];
-                    let tx_freq_hz = s.cfg.tx_freq_hz;
-                    let power = s.cfg.power;
-                    self.radio.set_frequency(s.cfg.freq_hz);
-                    self.radio.set_tx_frequency(tx_freq_hz);
-                    self.radio.set_power(power);
-                    self.reload_pa_calibration(tx_freq_hz, power);
-                    self.cw_tx_active = self.radio.enter_tx_keyed(syst);
-                    if self.cw_tx_active {
-                        self.tot_ticks = 0;
-                    }
-                }
-            }
-            if self.cw_tx_active {
-                self.radio.keyed_tone_on(syst, CW_SIDETONE_HZ_DIV_10);
-                if is_cw {
-                    self.radio.cw_carrier_on(syst);
-                }
-            } else {
-                self.radio.sidetone_on(syst, CW_SIDETONE_HZ_DIV_10);
-            }
-        } else {
-            self.cw_key_down = false;
-            if self.cw_tx_active {
-                if is_cw {
-                    self.radio.cw_carrier_off(syst);
-                    self.radio.cw_key_off(syst);
-                } else {
-                    self.radio.keyed_tone_off(syst);
-                }
-                self.cw_hang_ticks = match self.settings.bk_in {
-                    2 => CW_FULL_HANG_TICKS,
-                    1 => CW_SEMI_HANG_TICKS,
-                    _ => 0,
-                };
-            } else {
-                self.radio.sidetone_off(syst);
-            }
-        }
-    }
+    // --- CW / TOT poll delegates ------------------------------------------
 
-    /// Raw (undebounced) key-edge poll for CW
     pub fn poll_cw_key(&mut self, syst: &mut SYST) {
-        let down = self.radio.ptt_asserted();
-        if down != self.cw_key_down {
-            self.set_cw_key(syst, down);
-        }
+        tx::poll_cw_key(self, syst);
     }
 
-    /// BK-IN=Semi's post-release hang timer
     pub fn poll_cw_hang(&mut self, syst: &mut SYST) {
-        if self.cw_hang_ticks == 0 {
-            return;
-        }
-        self.cw_hang_ticks -= 1;
-        if self.cw_hang_ticks == 0 && !self.cw_key_down {
-            self.radio.enter_rx(syst);
-            self.cw_tx_active = false;
-        }
+        tx::poll_cw_hang(self, syst);
     }
 
-    // TOT
     pub fn poll_tot(&mut self, syst: &mut SYST) {
-        if !self.is_transmitting() || self.settings.tot_level == 0 {
-            return;
-        }
-        self.tot_ticks += 1;
-        let limit = self.settings.tot_seconds() * TICKS_PER_SECOND;
-        if self.tot_ticks >= limit {
-            if self.cw_tx_active {
-                self.radio.enter_rx(syst);
-                self.cw_tx_active = false;
-                self.cw_hang_ticks = 0;
-            } else {
-                self.set_ptt(syst, false);
-            }
-        }
+        tx::poll_tot(self, syst);
     }
 
     // getters

@@ -230,3 +230,59 @@ pub const DCS_TABLE: [u16; 105] = [
 pub fn dcs_index(code: u16) -> Option<usize> {
     DCS_TABLE.iter().position(|&c| c == code)
 }
+
+use super::input::DigitInput;
+use super::name_edit::NameEdit;
+
+pub(super) struct SettingsUi {
+    pub(super) index: usize,
+    pub(super) editing: bool,
+    pub(super) snapshot: i32,
+    pub(super) info_page: u8,
+    pub(super) offset_input: DigitInput<7>,
+    /// Digit entry for BATCAL: user types the multimeter-measured battery
+    /// voltage (1 integer digit + 2 decimals, e.g. "742" = 7.42V) instead of
+    /// adjusting the raw ADC calibration value directly with Up/Down.
+    pub(super) battery_input: DigitInput<3>,
+    /// T9 text editor for APRS callsign (max 6 chars).
+    pub(super) aprs_call_edit: NameEdit<6>,
+    /// T9 text editor for APRS device model name (max 6 chars).
+    pub(super) aprs_dev_name_edit: NameEdit<6>,
+    /// T9 text editor for APRS custom comment (max 16 chars).
+    pub(super) aprs_comment_edit: NameEdit<16>,
+    /// Digit entry for APRS TX frequency: 6 digits (XXX.XXX MHz).
+    pub(super) aprs_freq_input: DigitInput<6>,
+    /// Digit entry for APRS latitude: DDMM.mm
+    pub(super) aprs_lat_input: DigitInput<6>,
+    /// Digit entry for APRS longitude: DDDMM.mm
+    pub(super) aprs_lon_input: DigitInput<7>,
+    /// Hemisphere for latitude: false = N, true = S.
+    pub(super) aprs_lat_neg: bool,
+    /// Hemisphere for longitude: false = E, true = W.
+    pub(super) aprs_lon_neg: bool,
+}
+
+impl SettingsUi {
+    pub(super) const fn new() -> Self {
+        SettingsUi {
+            index: 0,
+            editing: false,
+            snapshot: 0,
+            info_page: 0,
+            offset_input: DigitInput::new(),
+            battery_input: DigitInput::new(),
+            aprs_call_edit: NameEdit::blank(),
+            aprs_dev_name_edit: NameEdit::blank(),
+            aprs_comment_edit: NameEdit::blank(),
+            aprs_freq_input: DigitInput::new(),
+            aprs_lat_input: DigitInput::new(),
+            aprs_lon_input: DigitInput::new(),
+            aprs_lat_neg: false,
+            aprs_lon_neg: false,
+        }
+    }
+
+    pub(super) fn is_editing(&self, index: usize) -> bool {
+        self.editing && self.index == index
+    }
+}
