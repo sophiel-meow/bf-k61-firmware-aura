@@ -1,3 +1,5 @@
+mod aprs_ops;
+mod ax25;
 mod chanmgr;
 mod contacts;
 mod fm;
@@ -396,6 +398,21 @@ impl<const N: usize> DigitInput<N> {
     }
 }
 
+pub(super) fn ddmm_to_microdeg(ddmm: u32, _is_lat: bool) -> i32 {
+    let deg = ddmm / 10_000;
+    let min_frac_total = ddmm % 10_000; // MM * 100 + mm
+    let frac_microdeg = (min_frac_total as u64 * 100 / 6) as u32;
+    (deg * 100_000 + frac_microdeg) as i32
+}
+
+pub(super) fn microdeg_to_ddmm(microdeg: i32, _is_lat: bool) -> u32 {
+    let v = microdeg.unsigned_abs();
+    let deg = v / 100_000;
+    let frac = v % 100_000;
+    let hundredths = (frac as u64 * 6 / 100) as u32; // 0..5999
+    deg * 10_000 + hundredths
+}
+
 // SettingsUi
 struct SettingsUi {
     index: usize,
@@ -407,6 +424,22 @@ struct SettingsUi {
     /// voltage (1 integer digit + 2 decimals, e.g. "742" = 7.42V) instead of
     /// adjusting the raw ADC calibration value directly with Up/Down.
     battery_input: DigitInput<3>,
+    /// T9 text editor for APRS callsign (max 6 chars).
+    aprs_call_edit: name_edit::NameEdit<6>,
+    /// T9 text editor for APRS device model name (max 6 chars).
+    aprs_dev_name_edit: name_edit::NameEdit<6>,
+    /// T9 text editor for APRS custom comment (max 16 chars).
+    aprs_comment_edit: name_edit::NameEdit<16>,
+    /// Digit entry for APRS TX frequency: 6 digits (XXX.XXX MHz).
+    aprs_freq_input: DigitInput<6>,
+    /// Digit entry for APRS latitude: DDMM.mm
+    aprs_lat_input: DigitInput<6>,
+    /// Digit entry for APRS longitude: DDDMM.mm
+    aprs_lon_input: DigitInput<7>,
+    /// Hemisphere for latitude: false = N, true = S.
+    aprs_lat_neg: bool,
+    /// Hemisphere for longitude: false = E, true = W.
+    aprs_lon_neg: bool,
 }
 
 impl SettingsUi {
@@ -418,6 +451,14 @@ impl SettingsUi {
             info_page: 0,
             offset_input: DigitInput::new(),
             battery_input: DigitInput::new(),
+            aprs_call_edit: name_edit::NameEdit::blank(),
+            aprs_dev_name_edit: name_edit::NameEdit::blank(),
+            aprs_comment_edit: name_edit::NameEdit::blank(),
+            aprs_freq_input: DigitInput::new(),
+            aprs_lat_input: DigitInput::new(),
+            aprs_lon_input: DigitInput::new(),
+            aprs_lat_neg: false,
+            aprs_lon_neg: false,
         }
     }
 
@@ -447,6 +488,12 @@ pub struct App {
     key_lock: bool,
     transmitting: bool,
     tx_prohibited: bool,
+    /// APRS beacon TX in progress, set by `send_beacon`, handled by main loop.
+    aprs_beacon_pending: bool,
+    /// NRZI-encoded bitstream for the pending APRS beacon.
+    aprs_beacon_nrzi: [u8; 512],
+    /// Number of valid bits in `aprs_beacon_nrzi`.
+    aprs_beacon_nrzi_bits: usize,
     dual_standby: bool,
     dual_hold_ticks: u16,
     tot_ticks: u16,
@@ -645,6 +692,9 @@ impl App {
             key_lock: false,
             transmitting: false,
             tx_prohibited: false,
+            aprs_beacon_pending: false,
+            aprs_beacon_nrzi: [0u8; 512],
+            aprs_beacon_nrzi_bits: 0,
             flashlight,
             dual_standby: settings.dual_standby,
             dual_hold_ticks: DUAL_STANDBY_HOLD_TICKS,
@@ -1281,6 +1331,14 @@ impl App {
     pub fn settings_show_arrows(&self) -> bool {
         self.settings_ui.editing
             && settings::SETTINGS_ORDER[self.settings_ui.index] != settings::SettingItem::Offse
+            && settings::SETTINGS_ORDER[self.settings_ui.index] != settings::SettingItem::AprsCall
+            && settings::SETTINGS_ORDER[self.settings_ui.index]
+                != settings::SettingItem::AprsDevName
+            && settings::SETTINGS_ORDER[self.settings_ui.index]
+                != settings::SettingItem::AprsComment
+            && settings::SETTINGS_ORDER[self.settings_ui.index] != settings::SettingItem::AprsFreq
+            && settings::SETTINGS_ORDER[self.settings_ui.index] != settings::SettingItem::AprsLat
+            && settings::SETTINGS_ORDER[self.settings_ui.index] != settings::SettingItem::AprsLon
     }
 
     pub fn settings_index(&self) -> usize {
@@ -1297,6 +1355,18 @@ impl App {
 
     pub fn settings_value_at(&self, index: usize, w: &mut dyn core::fmt::Write) {
         settings_ops::value_text_for(self, index, settings::SETTINGS_ORDER[index], w)
+    }
+
+    pub fn settings_cursor(&self, index: usize) -> Option<usize> {
+        if !self.settings_ui.editing {
+            return None;
+        }
+        match settings::SETTINGS_ORDER[index] {
+            settings::SettingItem::AprsCall => Some(self.settings_ui.aprs_call_edit.cursor),
+            settings::SettingItem::AprsDevName => Some(self.settings_ui.aprs_dev_name_edit.cursor),
+            settings::SettingItem::AprsComment => Some(self.settings_ui.aprs_comment_edit.cursor),
+            _ => None,
+        }
     }
 
     // channel manager UI
@@ -1339,6 +1409,35 @@ impl App {
     }
     pub fn poll_chanmgr_name_timeout(&mut self) {
         chanmgr::poll_name_timeout(self);
+    }
+
+    pub fn poll_aprs_call_timeout(&mut self) {
+        if self.mode == Mode::Settings
+            && self.settings_ui.editing
+            && settings::SETTINGS_ORDER[self.settings_ui.index] == settings::SettingItem::AprsCall
+        {
+            self.settings_ui.aprs_call_edit.tick();
+        }
+    }
+
+    pub fn poll_aprs_dev_name_timeout(&mut self) {
+        if self.mode == Mode::Settings
+            && self.settings_ui.editing
+            && settings::SETTINGS_ORDER[self.settings_ui.index]
+                == settings::SettingItem::AprsDevName
+        {
+            self.settings_ui.aprs_dev_name_edit.tick();
+        }
+    }
+
+    pub fn poll_aprs_comment_timeout(&mut self) {
+        if self.mode == Mode::Settings
+            && self.settings_ui.editing
+            && settings::SETTINGS_ORDER[self.settings_ui.index]
+                == settings::SettingItem::AprsComment
+        {
+            self.settings_ui.aprs_comment_edit.tick();
+        }
     }
 
     // contacts app UI
@@ -1563,6 +1662,43 @@ impl App {
     }
     pub fn tx_prohibited(&self) -> bool {
         self.tx_prohibited
+    }
+
+    pub fn aprs_beacon_active(&self) -> bool {
+        self.aprs_beacon_pending
+    }
+
+    pub(super) fn set_aprs_beacon_pending(&mut self, nrzi: [u8; 512], bits: usize) {
+        self.aprs_beacon_nrzi = nrzi;
+        self.aprs_beacon_nrzi_bits = bits;
+        self.aprs_beacon_pending = true;
+    }
+
+    pub fn transmit_pending_aprs_beacon(&mut self, syst: &mut SYST) {
+        use crate::device::radio::Power;
+
+        let tone_1200: u16 = (1200u32 * 1_032_444 / 100_000) as u16;
+        let tone_2200: u16 = (2200u32 * 1_032_444 / 100_000) as u16;
+        let bits = self.aprs_beacon_nrzi_bits;
+        let power = match self.settings.aprs_power {
+            1 => Power::Mid,
+            2 => Power::High,
+            _ => Power::Low,
+        };
+
+        self.radio.transmit_afsk(
+            syst,
+            &self.aprs_beacon_nrzi,
+            bits,
+            self.settings.aprs_freq_hz,
+            power,
+            tone_1200,
+            tone_2200,
+            300, // TX_DELAY_MS
+            50,  // TX_TAIL_MS
+        );
+        self.radio.enter_rx(syst);
+        self.aprs_beacon_pending = false;
     }
     pub fn is_key_locked(&self) -> bool {
         self.key_lock

@@ -43,9 +43,22 @@ pub enum SettingItem {
     FLock,
     Info,
     Reset,
+    // APRS
+    AprsCall,
+    AprsFreq,
+    AprsLat,
+    AprsLon,
+    AprsPath,
+    AprsDevInfo,
+    AprsDevName,
+    AprsBatVolt,
+    AprsComment,
+    AprsSsid,
+    AprsSymbol,
+    AprsPower,
 }
 
-pub const SETTINGS_ORDER: [SettingItem; 43] = [
+pub const SETTINGS_ORDER: [SettingItem; 55] = [
     SettingItem::Sql,
     SettingItem::Step,
     SettingItem::Tot,
@@ -89,6 +102,19 @@ pub const SETTINGS_ORDER: [SettingItem; 43] = [
     SettingItem::FLock,
     SettingItem::Info,
     SettingItem::Reset,
+    // APRS
+    SettingItem::AprsCall,
+    SettingItem::AprsFreq,
+    SettingItem::AprsLat,
+    SettingItem::AprsLon,
+    SettingItem::AprsPath,
+    SettingItem::AprsDevInfo,
+    SettingItem::AprsDevName,
+    SettingItem::AprsBatVolt,
+    SettingItem::AprsComment,
+    SettingItem::AprsSsid,
+    SettingItem::AprsSymbol,
+    SettingItem::AprsPower,
 ];
 
 impl SettingItem {
@@ -137,6 +163,18 @@ impl SettingItem {
             SettingItem::FLock => "FLOCK",
             SettingItem::Info => "INFO",
             SettingItem::Reset => "RESET",
+            SettingItem::AprsCall => "APRSCAL",
+            SettingItem::AprsFreq => "APRSFRQ",
+            SettingItem::AprsLat => "APRSLAT",
+            SettingItem::AprsLon => "APRSLON",
+            SettingItem::AprsPath => "APRSPTH",
+            SettingItem::AprsDevInfo => "APRDEV",
+            SettingItem::AprsDevName => "APRDNAM",
+            SettingItem::AprsBatVolt => "APRBAT",
+            SettingItem::AprsComment => "APRCMSG",
+            SettingItem::AprsSsid => "APRSSID",
+            SettingItem::AprsSymbol => "APRSYM",
+            SettingItem::AprsPower => "APRSPWR",
         }
     }
 
@@ -147,7 +185,16 @@ impl SettingItem {
     pub fn is_scalar(self) -> bool {
         !matches!(
             self,
-            SettingItem::Offse | SettingItem::BattCal | SettingItem::Info | SettingItem::Reset
+            SettingItem::Offse
+                | SettingItem::BattCal
+                | SettingItem::Info
+                | SettingItem::Reset
+                | SettingItem::AprsCall
+                | SettingItem::AprsDevName
+                | SettingItem::AprsComment
+                | SettingItem::AprsFreq
+                | SettingItem::AprsLat
+                | SettingItem::AprsLon
         )
     }
 }

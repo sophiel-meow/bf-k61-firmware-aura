@@ -1,0 +1,16 @@
+//! AFSK (Audio Frequency-Shift Keying) constants and helpers.
+
+/// Pre-transmission delay (ms) to let the PA settle.
+pub const TX_DELAY_MS: u32 = 300;
+
+/// Post-transmission tail (ms) — mark tone after the last bit.
+pub const TX_TAIL_MS: u32 = 50;
+
+/// Compute the FD6818 tone-A frequency word for the given frequency in Hz.
+///
+/// The formula is `freq_Hz * 1_032_444 / 100_000`, derived from the
+/// FD6818's 19.2 MHz crystal reference and 32768-step tone-phase
+/// accumulator.
+pub fn tone_word(hz: u32) -> u16 {
+    (hz * 1_032_444 / 100_000) as u16
+}

@@ -2,6 +2,7 @@
 #![no_main]
 
 mod app;
+
 mod board;
 mod cps;
 mod device;
@@ -251,6 +252,13 @@ fn main() -> ! {
 
         app.poll_keys(&mut cp.SYST);
 
+        // APRS beacon TX: draw overlay before blocking transmission
+        if app.aprs_beacon_active() {
+            ui::draw(&mut display, &mut app);
+            display.flush();
+            app.transmit_pending_aprs_beacon(&mut cp.SYST);
+        }
+
         // power sw
         if power.debounced_off(&mut cp.SYST) {
             writeln!(dbg, "power switch off, shutting down").ok();
@@ -284,6 +292,9 @@ fn main() -> ! {
         app.poll_cw_hang(&mut cp.SYST);
         app.poll_backlight();
         app.poll_chanmgr_name_timeout();
+        app.poll_aprs_call_timeout();
+        app.poll_aprs_dev_name_timeout();
+        app.poll_aprs_comment_timeout();
         app.poll_contacts_name_timeout();
 
         // Scan / Search / ScanQt / Fm / Spectrum (each self-guards on the

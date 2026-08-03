@@ -1,6 +1,6 @@
 use crate::board;
 use crate::drivers::fd6818::{AfOutState, Fd6818};
-use crate::hal::{adc, debounce, delay};
+use crate::hal::{adc, debounce, delay, timer};
 use cortex_m::peripheral::SYST;
 use kd32f328_pac::{gpioa, gpiof};
 
@@ -283,7 +283,7 @@ const DTMF_RX_TIMEOUT_TICKS: u8 = 40;
 const DTMF_RX_MAX_DIGITS: usize = 16;
 
 pub struct Radio {
-    fd6818: Fd6818<'static>,
+    pub(crate) fd6818: Fd6818<'static>,
     gpioa: &'static gpioa::RegisterBlock,
     gpiob: &'static gpiof::RegisterBlock,
     adc: adc::Adc<'static>,
@@ -945,6 +945,75 @@ impl Radio {
         self.fd6818.set_tx_led(syst, true);
         self.tx_state = true;
         true
+    }
+
+    pub fn transmit_afsk(
+        &mut self,
+        syst: &mut SYST,
+        nrzi_bits: &[u8],
+        total_bits: usize,
+        freq_hz: u32,
+        power: Power,
+        tone_mark: u16,
+        tone_space: u16,
+        tx_delay_ms: u32,
+        tx_tail_ms: u32,
+    ) {
+        use crate::drivers::fd6818::{AfOutState, Modulation};
+
+        self.fd6818.set_frequency_hz(syst, freq_hz);
+        self.fd6818.set_wide_bandwidth(syst, true);
+        self.fd6818.pa_enable(syst, power);
+        if freq_hz >= 300_000_000 {
+            self.fd6818.set_tx_band_uhf(syst);
+        } else {
+            self.fd6818.set_tx_band_vhf(syst);
+        }
+
+        self.fd6818.afsk_set_tone1_freq(syst, tone_mark);
+        self.fd6818.afsk_enable_tone1(syst);
+        self.fd6818.enter_tx_tone_state(syst);
+        self.fd6818
+            .set_af_out(syst, AfOutState::Beep, true, Modulation::Fm);
+
+        self.fd6818.set_tx_led(syst, true);
+        board::set_speaker_switch(self.gpiob, true);
+
+        let tim6 = unsafe { timer::AfskTimer::new() };
+
+        delay::ms(syst, tx_delay_ms);
+
+        let first_byte = nrzi_bits[0];
+        let first_bit = (first_byte >> 7) & 1;
+        let first_tone = if first_bit != 0 {
+            tone_mark
+        } else {
+            tone_space
+        };
+        self.fd6818.afsk_set_tone1_freq(syst, first_tone);
+        tim6.sync_start();
+
+        for bit_idx in 1..total_bits {
+            tim6.wait_bit();
+            let byte = nrzi_bits[bit_idx / 8];
+            let bit = (byte >> (7 - (bit_idx % 8))) & 1;
+            let tone_val: u16 = if bit != 0 { tone_mark } else { tone_space };
+            self.fd6818.afsk_set_tone1_freq(syst, tone_val);
+        }
+
+        tim6.wait_bit();
+        tim6.stop();
+
+        self.fd6818.afsk_set_tone1_freq(syst, tone_mark);
+        delay::ms(syst, tx_tail_ms);
+
+        self.fd6818.afsk_disable_tones(syst);
+        self.fd6818.pa_off(syst);
+        self.fd6818.set_tx_band_off(syst);
+        self.fd6818.set_tx_led(syst, false);
+        board::set_speaker_switch(self.gpiob, false);
+        self.fd6818
+            .set_af_out(syst, AfOutState::Mute, true, Modulation::Fm);
     }
 
     pub fn end_tx(&mut self, syst: &mut SYST) {

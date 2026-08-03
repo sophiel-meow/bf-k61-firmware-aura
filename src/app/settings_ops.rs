@@ -1,4 +1,5 @@
 use super::keyfn;
+use super::name_edit::write_name_plain;
 use super::settings::SettingItem;
 use super::{
     channel_display_mode_from_u8, clamp_step, power_from_raw, power_to_raw, subaudio_from_index,
@@ -73,6 +74,15 @@ pub(super) fn current_value(app: &App, item: SettingItem) -> i32 {
         SettingItem::BootSnd => app.settings.boot_sound_enabled as i32,
         SettingItem::BattCal => app.settings.battery_cal_raw as i32,
         SettingItem::FLock => app.settings.band_lock as i32,
+        SettingItem::AprsFreq => app.settings.aprs_freq_hz as i32,
+        SettingItem::AprsLat => app.settings.aprs_lat,
+        SettingItem::AprsLon => app.settings.aprs_lon,
+        SettingItem::AprsPath => app.settings.aprs_path_idx as i32,
+        SettingItem::AprsDevInfo => app.settings.aprs_dev_info as i32,
+        SettingItem::AprsBatVolt => app.settings.aprs_bat_volt as i32,
+        SettingItem::AprsSsid => app.settings.aprs_ssid as i32,
+        SettingItem::AprsSymbol => app.settings.aprs_symbol_idx as i32,
+        SettingItem::AprsPower => app.settings.aprs_power as i32,
         SettingItem::Info => app.settings_ui.info_page as i32,
         _ => 0,
     }
@@ -92,7 +102,9 @@ pub(super) fn adjust(app: &mut App, syst: &mut SYST, item: SettingItem, up: bool
         | SettingItem::Beep
         | SettingItem::Wn
         | SettingItem::Tail
-        | SettingItem::AniTx => 1 - cur,
+        | SettingItem::AniTx
+        | SettingItem::AprsDevInfo
+        | SettingItem::AprsBatVolt => 1 - cur,
         // Locked to OFF while BootMode is None (0): boot sound has no
         // effect there and the item is meant to read as disabled, so
         // Up/Down are a no-op instead of toggling a value nobody can hear.
@@ -130,7 +142,11 @@ pub(super) fn adjust(app: &mut App, syst: &mut SYST, item: SettingItem, up: bool
         | SettingItem::Side2Short
         | SettingItem::Side2Long
         | SettingItem::BandShort
-        | SettingItem::BandLong => clamp_step(cur, up, 0, 10),
+        | SettingItem::BandLong => clamp_step(cur, up, 0, 11),
+        SettingItem::AprsPath => clamp_step(cur, up, 0, 3),
+        SettingItem::AprsSsid => clamp_step(cur, up, 0, 15),
+        SettingItem::AprsSymbol => clamp_step(cur, up, 0, 10),
+        SettingItem::AprsPower => clamp_step(cur, up, 0, 2),
         SettingItem::FLock => clamp_step(cur, up, 0, 9),
         // Meaningless (and locked to OFF) while the master side isn't in CW
         SettingItem::BkIn => {
@@ -298,6 +314,17 @@ pub(super) fn apply(app: &mut App, syst: &mut SYST, item: SettingItem, v: i32) {
             // unrelated RX restart) makes it feel live while dialing it in.
             app.commit_side_change(syst);
         }
+        SettingItem::AprsFreq => {
+            app.settings.aprs_freq_hz = (v as u32).clamp(100_000_000, 999_999_999);
+        }
+        SettingItem::AprsLat => app.settings.aprs_lat = v,
+        SettingItem::AprsLon => app.settings.aprs_lon = v,
+        SettingItem::AprsPath => app.settings.aprs_path_idx = v as u8,
+        SettingItem::AprsDevInfo => app.settings.aprs_dev_info = v != 0,
+        SettingItem::AprsBatVolt => app.settings.aprs_bat_volt = v != 0,
+        SettingItem::AprsSsid => app.settings.aprs_ssid = v as u8,
+        SettingItem::AprsSymbol => app.settings.aprs_symbol_idx = v as u8,
+        SettingItem::AprsPower => app.settings.aprs_power = v as u8,
         _ => {}
     }
 }
@@ -525,7 +552,7 @@ pub fn value_text_for(app: &App, index: usize, item: SettingItem, w: &mut dyn Wr
         | SettingItem::Side2Long
         | SettingItem::BandShort
         | SettingItem::BandLong => {
-            let idx = current_value(app, item).clamp(0, 10) as u8;
+            let idx = current_value(app, item).clamp(0, 11) as u8;
             let _ = write!(w, "{}", keyfn::from_u8(idx).label());
         }
         SettingItem::FLock => {
@@ -542,6 +569,129 @@ pub fn value_text_for(app: &App, index: usize, item: SettingItem, w: &mut dyn Wr
                     _ => "OFF",
                 }
             );
+        }
+        SettingItem::AprsCall => {
+            if app.settings_ui.is_editing(index) {
+                write_name_plain(&app.settings_ui.aprs_call_edit.buf, w);
+            } else {
+                let call = &app.settings.aprs_callsign;
+                let end = call.iter().position(|&b| b == 0).unwrap_or(call.len());
+                for &b in &call[..end] {
+                    let _ = w.write_char(if b == 0 || b == 0xFF { ' ' } else { b as char });
+                }
+            }
+        }
+        SettingItem::AprsFreq => {
+            if app.settings_ui.is_editing(index) {
+                app.settings_ui.aprs_freq_input.write_display(3, w);
+            } else {
+                let hz = app.settings.aprs_freq_hz;
+                let mhz = hz / 1_000_000;
+                let khz = (hz % 1_000_000) / 1000;
+                let _ = write!(w, "{}.{:03}", mhz, khz);
+            }
+        }
+        SettingItem::AprsLat | SettingItem::AprsLon => {
+            let v = current_value(app, item);
+            if v == crate::flash_map::APRS_COORD_NOT_SET {
+                let _ = write!(w, "----");
+            } else if app.settings_ui.is_editing(index) {
+                match item {
+                    SettingItem::AprsLat => {
+                        app.settings_ui.aprs_lat_input.write_display(2, w);
+                        let _ = write!(
+                            w,
+                            "{}",
+                            if app.settings_ui.aprs_lat_neg { "S" } else { "N" }
+                        );
+                    }
+                    _ /* AprsLon */ => {
+                        app.settings_ui.aprs_lon_input.write_display(3, w);
+                        let _ = write!(
+                            w,
+                            "{}",
+                            if app.settings_ui.aprs_lon_neg { "W" } else { "E" }
+                        );
+                    }
+                }
+            } else {
+                let neg = v < 0;
+                let av = if neg { -v } else { v };
+                let deg = av / 100_000;
+                let frac = av % 100_000;
+                let min = frac * 60 / 100_000;
+                let min_frac = (frac * 60 % 100_000) / 1000;
+                let _ = write!(
+                    w,
+                    "{}{}*{:02}.{:02}'",
+                    if neg { "-" } else { "" },
+                    deg,
+                    min,
+                    min_frac,
+                );
+            }
+        }
+        SettingItem::AprsPath => {
+            let idx = current_value(app, item) as usize;
+            let s = match idx {
+                1 => "WIDE2-2",
+                2 => "ARISS",
+                3 => "DIRECT",
+                _ => "W1-1,W2-1",
+            };
+            let _ = write!(w, "{}", s);
+        }
+        SettingItem::AprsDevInfo | SettingItem::AprsBatVolt => {
+            let _ = write!(
+                w,
+                "{}",
+                if current_value(app, item) != 0 {
+                    "ON"
+                } else {
+                    "OFF"
+                }
+            );
+        }
+        SettingItem::AprsDevName => {
+            if app.settings_ui.is_editing(index) {
+                write_name_plain(&app.settings_ui.aprs_dev_name_edit.buf, w);
+            } else {
+                let name = &app.settings.aprs_dev_name;
+                let end = name.iter().position(|&b| b == 0).unwrap_or(name.len());
+                for &b in &name[..end] {
+                    let _ = w.write_char(if b == 0 || b == 0xFF { ' ' } else { b as char });
+                }
+            }
+        }
+        SettingItem::AprsComment => {
+            if app.settings_ui.is_editing(index) {
+                write_name_plain(&app.settings_ui.aprs_comment_edit.buf, w);
+            } else {
+                let comment = &app.settings.aprs_custom_comment;
+                let end = comment
+                    .iter()
+                    .position(|&b| b == 0)
+                    .unwrap_or(comment.len());
+                for &b in &comment[..end] {
+                    let _ = w.write_char(if b == 0 || b == 0xFF { ' ' } else { b as char });
+                }
+            }
+        }
+        SettingItem::AprsSsid => {
+            let _ = write!(w, "-{}", current_value(app, item));
+        }
+        SettingItem::AprsSymbol => {
+            let idx = current_value(app, item) as usize;
+            let label = super::aprs_ops::symbol_preset(idx as u8).2;
+            let _ = write!(w, "{}", label);
+        }
+        SettingItem::AprsPower => {
+            let label = match current_value(app, item) {
+                1 => "MID",
+                2 => "HIGH",
+                _ => "LOW",
+            };
+            let _ = write!(w, "{}", label);
         }
         _ => {
             let _ = write!(w, "{}", current_value(app, item));

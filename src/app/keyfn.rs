@@ -14,6 +14,7 @@ pub enum KeyFunction {
     Flashlight,
     Search,
     Reverse,
+    AprsBeacon,
 }
 
 impl KeyFunction {
@@ -30,6 +31,7 @@ impl KeyFunction {
             KeyFunction::Flashlight => "LIGHT",
             KeyFunction::Search => "SEARCH",
             KeyFunction::Reverse => "REVERSE",
+            KeyFunction::AprsBeacon => "APRS TX",
         }
     }
 }
@@ -46,6 +48,7 @@ pub(super) fn from_u8(v: u8) -> KeyFunction {
         8 => KeyFunction::Flashlight,
         9 => KeyFunction::Search,
         10 => KeyFunction::Reverse,
+        11 => KeyFunction::AprsBeacon,
         _ => KeyFunction::None,
     }
 }
@@ -62,5 +65,6 @@ pub(super) fn invoke(app: &mut App, syst: &mut SYST, func: KeyFunction) {
         KeyFunction::Flashlight => app.flashlight.toggle(),
         KeyFunction::Search => search::enter(app, syst),
         KeyFunction::Reverse => app.toggle_reverse(syst),
+        KeyFunction::AprsBeacon => super::aprs_ops::send_beacon(app),
     }
 }

@@ -505,7 +505,38 @@ pub struct Settings {
     /// Break-in behavior while the master side's modulation is CW/CWF
     /// 0 = off, 1 = semi, 2 = full
     pub bk_in: u8,
+    /// APRS callsign (6 chars + null terminator), e.g. "BG4KNN\0".
+    pub aprs_callsign: [u8; 7],
+    /// APRS latitude, degrees * 100_000 (negative = south).
+    pub aprs_lat: i32,
+    /// APRS longitude, degrees * 100_000 (negative = west).
+    pub aprs_lon: i32,
+    /// Index into `app::aprs_ops::DIGIPATH_PRESETS`.
+    pub aprs_path_idx: u8,
+    /// APRS TX frequency in Hz
+    pub aprs_freq_hz: u32,
+    /// Include device model name in APRS beacon comment.
+    pub aprs_dev_info: bool,
+    /// Device model name (6 chars + null), e.g. "UV-K6x\0".
+    pub aprs_dev_name: [u8; 7],
+    /// Include battery voltage in APRS beacon comment.
+    pub aprs_bat_volt: bool,
+    /// Custom APRS comment text (16 chars + null).
+    pub aprs_custom_comment: [u8; 17],
+    /// APRS source SSID (0–15), e.g. 7 for "BG4KNN-7".
+    pub aprs_ssid: u8,
+    /// Index into `APRS_SYMBOLS` preset table.
+    pub aprs_symbol_idx: u8,
+    /// APRS TX power: 0 = Low, 1 = Mid, 2 = High.
+    pub aprs_power: u8,
 }
+
+/// Size of the serialised Settings record in bytes.
+pub const SETTINGS_BYTES: usize = 212;
+
+/// Sentinel meaning "APRS coordinates not yet configured."
+/// Deliberately outside valid [-90°, 90°] / [-180°, 180°] range.
+pub const APRS_COORD_NOT_SET: i32 = i32::MAX;
 
 impl Settings {
     pub const DEFAULT: Settings = Settings {
@@ -545,9 +576,21 @@ impl Settings {
         battery_cal_raw: 2731,
         band_lock: 0, // CE & CN
         bk_in: 0,
+        aprs_callsign: [0; 7],
+        aprs_lat: APRS_COORD_NOT_SET,
+        aprs_lon: APRS_COORD_NOT_SET,
+        aprs_path_idx: 0, // WIDE1-1,WIDE2-1
+        aprs_freq_hz: 144_390_000,
+        aprs_dev_info: true,
+        aprs_dev_name: *b"UV-K6x\x00",
+        aprs_bat_volt: false,
+        aprs_custom_comment: [0; 17],
+        aprs_ssid: 0,
+        aprs_symbol_idx: 0,
+        aprs_power: 0, // Low
     };
 
-    pub fn from_bytes(buf: &[u8; 163]) -> Settings {
+    pub fn from_bytes(buf: &[u8; SETTINGS_BYTES]) -> Settings {
         let mut boot_text_line1 = [0u8; 16];
         boot_text_line1.copy_from_slice(&buf[30..46]);
         let mut boot_text_line2 = [0u8; 16];
@@ -556,6 +599,12 @@ impl Settings {
         for (i, pair) in boot_tune.iter_mut().enumerate() {
             *pair = (buf[62 + i * 2], buf[62 + i * 2 + 1]);
         }
+        let mut aprs_call = [0u8; 7];
+        aprs_call.copy_from_slice(&buf[163..170]);
+        let mut aprs_dev_name = [0u8; 7];
+        aprs_dev_name.copy_from_slice(&buf[184..191]);
+        let mut aprs_custom_comment = [0u8; 17];
+        aprs_custom_comment.copy_from_slice(&buf[192..209]);
 
         Settings {
             sql_level: buf[0],
@@ -577,12 +626,12 @@ impl Settings {
             save_level: buf[16].min(4),
             backlight_time: buf[17].min(4),
             channel_display_mode: buf[18].min(2),
-            side1_short: buf[19].min(10),
-            side1_long: buf[20].min(10),
-            side2_short: buf[21].min(10),
-            side2_long: buf[22].min(10),
-            band_short: buf[23].min(10),
-            band_long: buf[24].min(10),
+            side1_short: buf[19].min(11),
+            side1_long: buf[20].min(11),
+            side2_short: buf[21].min(11),
+            side2_long: buf[22].min(11),
+            band_short: buf[23].min(11),
+            band_long: buf[24].min(11),
             ani_tx: buf[25] != 0,
             rptrl: buf[26].min(10),
             vox_delay: buf[27].min(15),
@@ -594,11 +643,37 @@ impl Settings {
             battery_cal_raw: u16::from_le_bytes([buf[158], buf[159]]),
             band_lock: buf[160].min(9),
             bk_in: buf[162].min(2),
+            aprs_callsign: aprs_call,
+            aprs_lat: {
+                let v = i32::from_le_bytes([buf[170], buf[171], buf[172], buf[173]]);
+                if v >= -90_00000 && v <= 90_00000 {
+                    v
+                } else {
+                    APRS_COORD_NOT_SET
+                }
+            },
+            aprs_lon: {
+                let v = i32::from_le_bytes([buf[174], buf[175], buf[176], buf[177]]);
+                if v >= -180_00000 && v <= 180_00000 {
+                    v
+                } else {
+                    APRS_COORD_NOT_SET
+                }
+            },
+            aprs_path_idx: buf[178].min(3),
+            aprs_freq_hz: u32::from_le_bytes([buf[179], buf[180], buf[181], buf[182]]),
+            aprs_dev_info: buf[183] != 0,
+            aprs_dev_name,
+            aprs_bat_volt: buf[191] != 0,
+            aprs_custom_comment,
+            aprs_ssid: buf[209].min(15),
+            aprs_symbol_idx: buf[210].min(5),
+            aprs_power: buf[211].min(2),
         }
     }
 
-    pub fn to_bytes(&self) -> [u8; 163] {
-        let mut buf = [0u8; 163];
+    pub fn to_bytes(&self) -> [u8; SETTINGS_BYTES] {
+        let mut buf = [0u8; SETTINGS_BYTES];
         buf[0] = self.sql_level;
         buf[1] = self.tail_elimination as u8;
         buf[2] = self.busy_lock as u8;
@@ -638,6 +713,20 @@ impl Settings {
         buf[158..160].copy_from_slice(&self.battery_cal_raw.to_le_bytes());
         buf[160] = self.band_lock;
         buf[162] = self.bk_in;
+        // APRS fields start at offset 163
+        buf[163..170].copy_from_slice(&self.aprs_callsign);
+        buf[170..174].copy_from_slice(&self.aprs_lat.to_le_bytes());
+        buf[174..178].copy_from_slice(&self.aprs_lon.to_le_bytes());
+        buf[178] = self.aprs_path_idx;
+        buf[179..183].copy_from_slice(&self.aprs_freq_hz.to_le_bytes());
+        // APRS comment fields (new in v2)
+        buf[183] = self.aprs_dev_info as u8;
+        buf[184..191].copy_from_slice(&self.aprs_dev_name);
+        buf[191] = self.aprs_bat_volt as u8;
+        buf[192..209].copy_from_slice(&self.aprs_custom_comment);
+        buf[209] = self.aprs_ssid;
+        buf[210] = self.aprs_symbol_idx;
+        buf[211] = self.aprs_power;
         buf
     }
 

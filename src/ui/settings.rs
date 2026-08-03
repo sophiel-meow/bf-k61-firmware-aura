@@ -18,6 +18,10 @@ impl<'a> ListSource for SettingsSource<'a> {
         self.0.settings_value_at(index, w);
         true
     }
+
+    fn cursor(&mut self, index: usize) -> Option<usize> {
+        self.0.settings_cursor(index)
+    }
 }
 
 // draw_settings

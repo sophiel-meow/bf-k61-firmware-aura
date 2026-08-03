@@ -248,6 +248,30 @@ fn dispatch_settings(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
         dispatch_battery_input(app, syst, ev);
         return;
     }
+    if app.settings_ui.editing && item == settings::SettingItem::AprsCall {
+        dispatch_aprs_call_input(app, syst, ev);
+        return;
+    }
+    if app.settings_ui.editing && item == settings::SettingItem::AprsDevName {
+        dispatch_aprs_dev_name_input(app, syst, ev);
+        return;
+    }
+    if app.settings_ui.editing && item == settings::SettingItem::AprsComment {
+        dispatch_aprs_comment_input(app, syst, ev);
+        return;
+    }
+    if app.settings_ui.editing && item == settings::SettingItem::AprsFreq {
+        dispatch_aprs_freq_input(app, syst, ev);
+        return;
+    }
+    if app.settings_ui.editing && item == settings::SettingItem::AprsLat {
+        dispatch_aprs_coord_input(app, syst, ev, true);
+        return;
+    }
+    if app.settings_ui.editing && item == settings::SettingItem::AprsLon {
+        dispatch_aprs_coord_input(app, syst, ev, false);
+        return;
+    }
 
     match ev.kind {
         KeyEventKind::Single | KeyEventKind::Repeat => match ev.key {
@@ -282,6 +306,34 @@ fn dispatch_settings(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
                         app.settings_ui.offset_input.clear();
                     } else if item == settings::SettingItem::BattCal {
                         app.settings_ui.battery_input.clear();
+                    } else if item == settings::SettingItem::AprsCall {
+                        let mut init = [0u8; 6];
+                        let src = &app.settings.aprs_callsign;
+                        let len = src.iter().position(|&b| b == 0).unwrap_or(6).min(6);
+                        init[..len].copy_from_slice(&src[..len]);
+                        app.settings_ui.aprs_call_edit.start(init);
+                    } else if item == settings::SettingItem::AprsDevName {
+                        let mut init = [0u8; 6];
+                        let src = &app.settings.aprs_dev_name;
+                        let len = src.iter().position(|&b| b == 0).unwrap_or(6).min(6);
+                        init[..len].copy_from_slice(&src[..len]);
+                        app.settings_ui.aprs_dev_name_edit.start(init);
+                    } else if item == settings::SettingItem::AprsComment {
+                        let mut init = [0u8; 16];
+                        let src = &app.settings.aprs_custom_comment;
+                        let len = src.iter().position(|&b| b == 0).unwrap_or(16).min(16);
+                        init[..len].copy_from_slice(&src[..len]);
+                        app.settings_ui.aprs_comment_edit.start(init);
+                    } else if item == settings::SettingItem::AprsFreq {
+                        app.settings_ui.aprs_freq_input.clear();
+                    } else if item == settings::SettingItem::AprsLat {
+                        app.settings_ui.aprs_lat_input.clear();
+                        let v = app.settings.aprs_lat;
+                        app.settings_ui.aprs_lat_neg = v != i32::MAX && v < 0;
+                    } else if item == settings::SettingItem::AprsLon {
+                        app.settings_ui.aprs_lon_input.clear();
+                        let v = app.settings.aprs_lon;
+                        app.settings_ui.aprs_lon_neg = v != i32::MAX && v < 0;
                     } else {
                         app.settings_ui.snapshot = settings_ops::current_value(app, item);
                     }
@@ -363,6 +415,138 @@ fn dispatch_battery_input(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
     }
 }
 
+fn dispatch_aprs_call_input(app: &mut App, _syst: &mut SYST, ev: KeyEvent) {
+    if ev.kind != KeyEventKind::Single {
+        return;
+    }
+    if let Some(digit) = digit_value(ev.key) {
+        app.settings_ui.aprs_call_edit.press_digit(digit);
+        return;
+    }
+    match ev.key {
+        KeyId::Up => app.settings_ui.aprs_call_edit.move_cursor(true),
+        KeyId::Down => app.settings_ui.aprs_call_edit.move_cursor(false),
+        KeyId::Menu => {
+            app.settings_ui.aprs_call_edit.finalize_pending();
+            let call = &mut app.settings.aprs_callsign;
+            *call = [0u8; 7];
+            let len = app
+                .settings_ui
+                .aprs_call_edit
+                .buf
+                .iter()
+                .position(|&b| b == 0)
+                .unwrap_or(6)
+                .min(6);
+            call[..len].copy_from_slice(&app.settings_ui.aprs_call_edit.buf[..len]);
+            for b in call.iter_mut().take(len) {
+                b.make_ascii_uppercase();
+            }
+            app.settings_ui.editing = false;
+            app.save_settings();
+        }
+        KeyId::Exit => {
+            if app.settings_ui.aprs_call_edit.buf.iter().all(|&b| b == 0) {
+                app.settings_ui.editing = false;
+            } else {
+                app.settings_ui.aprs_call_edit.backspace();
+            }
+        }
+        _ => {}
+    }
+}
+
+fn dispatch_aprs_dev_name_input(app: &mut App, _syst: &mut SYST, ev: KeyEvent) {
+    if ev.kind != KeyEventKind::Single {
+        return;
+    }
+    if let Some(digit) = digit_value(ev.key) {
+        app.settings_ui.aprs_dev_name_edit.press_digit(digit);
+        return;
+    }
+    match ev.key {
+        KeyId::Up => app.settings_ui.aprs_dev_name_edit.move_cursor(true),
+        KeyId::Down => app.settings_ui.aprs_dev_name_edit.move_cursor(false),
+        KeyId::Menu => {
+            app.settings_ui.aprs_dev_name_edit.finalize_pending();
+            let dev = &mut app.settings.aprs_dev_name;
+            *dev = [0u8; 7];
+            let len = app
+                .settings_ui
+                .aprs_dev_name_edit
+                .buf
+                .iter()
+                .position(|&b| b == 0)
+                .unwrap_or(6)
+                .min(6);
+            dev[..len].copy_from_slice(&app.settings_ui.aprs_dev_name_edit.buf[..len]);
+            for b in dev.iter_mut().take(len) {
+                b.make_ascii_uppercase();
+            }
+            app.settings_ui.editing = false;
+            app.save_settings();
+        }
+        KeyId::Exit => {
+            if app
+                .settings_ui
+                .aprs_dev_name_edit
+                .buf
+                .iter()
+                .all(|&b| b == 0)
+            {
+                app.settings_ui.editing = false;
+            } else {
+                app.settings_ui.aprs_dev_name_edit.backspace();
+            }
+        }
+        _ => {}
+    }
+}
+
+fn dispatch_aprs_comment_input(app: &mut App, _syst: &mut SYST, ev: KeyEvent) {
+    if ev.kind != KeyEventKind::Single {
+        return;
+    }
+    if let Some(digit) = digit_value(ev.key) {
+        app.settings_ui.aprs_comment_edit.press_digit(digit);
+        return;
+    }
+    match ev.key {
+        KeyId::Up => app.settings_ui.aprs_comment_edit.move_cursor(true),
+        KeyId::Down => app.settings_ui.aprs_comment_edit.move_cursor(false),
+        KeyId::Menu => {
+            app.settings_ui.aprs_comment_edit.finalize_pending();
+            let comment = &mut app.settings.aprs_custom_comment;
+            *comment = [0u8; 17];
+            let len = app
+                .settings_ui
+                .aprs_comment_edit
+                .buf
+                .iter()
+                .position(|&b| b == 0)
+                .unwrap_or(16)
+                .min(16);
+            comment[..len].copy_from_slice(&app.settings_ui.aprs_comment_edit.buf[..len]);
+            app.settings_ui.editing = false;
+            app.save_settings();
+        }
+        KeyId::Exit => {
+            if app
+                .settings_ui
+                .aprs_comment_edit
+                .buf
+                .iter()
+                .all(|&b| b == 0)
+            {
+                app.settings_ui.editing = false;
+            } else {
+                app.settings_ui.aprs_comment_edit.backspace();
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Solves the calibration equation for the raw ADC value
 fn commit_battery_input(app: &mut App, syst: &mut SYST) {
     let entered_cv = app.settings_ui.battery_input.value();
@@ -377,5 +561,109 @@ fn commit_battery_input(app: &mut App, syst: &mut SYST) {
         app.save_settings();
     }
     app.settings_ui.battery_input.clear();
+    app.settings_ui.editing = false;
+}
+
+/// Handle digit input for APRS TX frequency (XXX.XXX MHz).
+fn dispatch_aprs_freq_input(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
+    if ev.kind != KeyEventKind::Single {
+        return;
+    }
+    if let Some(digit) = digit_value(ev.key) {
+        app.settings_ui.aprs_freq_input.push(digit);
+        if app.settings_ui.aprs_freq_input.is_full() {
+            commit_aprs_freq_input(app, syst);
+        }
+        return;
+    }
+    match ev.key {
+        KeyId::Menu => commit_aprs_freq_input(app, syst),
+        KeyId::Exit if app.settings_ui.aprs_freq_input.is_empty() => {
+            app.settings_ui.editing = false;
+        }
+        KeyId::Exit => app.settings_ui.aprs_freq_input.backspace(),
+        _ => {}
+    }
+}
+
+fn commit_aprs_freq_input(app: &mut App, syst: &mut SYST) {
+    if !app.settings_ui.aprs_freq_input.is_empty() {
+        let hz = app.settings_ui.aprs_freq_input.value() * 1000;
+        let clamped = hz.clamp(100_000_000, 999_999_999);
+        settings_ops::apply(app, syst, settings::SettingItem::AprsFreq, clamped as i32);
+        app.save_settings();
+    }
+    app.settings_ui.aprs_freq_input.clear();
+    app.settings_ui.editing = false;
+}
+
+/// Handle digit input for APRS coordinates (lat or lon).
+/// `is_lat`: true → latitude (DDMMmm, 6 digits), false → longitude (DDDMMmm, 7 digits).
+fn dispatch_aprs_coord_input(app: &mut App, syst: &mut SYST, ev: KeyEvent, is_lat: bool) {
+    if ev.kind != KeyEventKind::Single {
+        return;
+    }
+    if let Some(digit) = digit_value(ev.key) {
+        if is_lat {
+            app.settings_ui.aprs_lat_input.push(digit);
+        } else {
+            app.settings_ui.aprs_lon_input.push(digit);
+        }
+        return;
+    }
+    match ev.key {
+        KeyId::Asterisk => {
+            if is_lat {
+                app.settings_ui.aprs_lat_neg = !app.settings_ui.aprs_lat_neg;
+            } else {
+                app.settings_ui.aprs_lon_neg = !app.settings_ui.aprs_lon_neg;
+            }
+        }
+        KeyId::Menu => commit_aprs_coord_input(app, syst, is_lat),
+        KeyId::Exit => {
+            if is_lat {
+                if app.settings_ui.aprs_lat_input.is_empty() {
+                    app.settings_ui.editing = false;
+                } else {
+                    app.settings_ui.aprs_lat_input.backspace();
+                }
+            } else if app.settings_ui.aprs_lon_input.is_empty() {
+                app.settings_ui.editing = false;
+            } else {
+                app.settings_ui.aprs_lon_input.backspace();
+            }
+        }
+        _ => {}
+    }
+}
+
+fn commit_aprs_coord_input(app: &mut App, _syst: &mut SYST, is_lat: bool) {
+    if is_lat {
+        if !app.settings_ui.aprs_lat_input.is_empty() {
+            let microdeg = super::ddmm_to_microdeg(app.settings_ui.aprs_lat_input.value(), true);
+            let microdeg = if app.settings_ui.aprs_lat_neg {
+                -microdeg
+            } else {
+                microdeg
+            };
+            app.settings.aprs_lat = microdeg.clamp(-90_00000, 90_00000);
+            app.save_settings();
+        }
+        app.settings_ui.aprs_lat_input.clear();
+        app.settings_ui.aprs_lat_neg = false;
+    } else {
+        if !app.settings_ui.aprs_lon_input.is_empty() {
+            let microdeg = super::ddmm_to_microdeg(app.settings_ui.aprs_lon_input.value(), false);
+            let microdeg = if app.settings_ui.aprs_lon_neg {
+                -microdeg
+            } else {
+                microdeg
+            };
+            app.settings.aprs_lon = microdeg.clamp(-180_00000, 180_00000);
+            app.save_settings();
+        }
+        app.settings_ui.aprs_lon_input.clear();
+        app.settings_ui.aprs_lon_neg = false;
+    }
     app.settings_ui.editing = false;
 }

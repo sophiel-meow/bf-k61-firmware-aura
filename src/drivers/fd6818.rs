@@ -3,6 +3,8 @@ use crate::hal::delay;
 use cortex_m::peripheral::SYST;
 use kd32f328_pac::gpiof;
 
+const BUS_DELAY_CYCLES: u32 = 96;
+
 const BIT_DELAY_US: u32 = 1;
 
 const REG_FREQ_LO: u8 = 0x38;
@@ -592,6 +594,48 @@ impl<'a> Fd6818<'a> {
         self.write_reg(syst, REG_TONE_GAIN, 0x0000);
         self.tone_active = false;
         self.idle(syst);
+    }
+
+    /// Fixed tone gain for Bell 202 AFSK: TONE1 gain = 60, TONE2 gain = 60.
+    const AFSK_TONE_GAIN: u16 = (60u16 << 8) | 60;
+    /// REG_70 value enabling only TONE1 (1200 Hz mark).
+    const AFSK_REG70_MARK: u16 = 0x8000 | (60u16 << 8);
+    /// REG_70 value enabling only TONE2 (2200 Hz space).
+    const AFSK_REG70_SPACE: u16 = 0x0080 | 60;
+
+    pub fn afsk_config_tones(&mut self, syst: &mut SYST) {
+        self.write_reg(syst, REG_TONE_FREQ, Self::tone_reg_word(1200));
+        self.write_reg(syst, REG_FSK_BAUD, Self::tone_reg_word(2200));
+    }
+
+    pub fn afsk_set_tone(&mut self, syst: &mut SYST, mark: bool) {
+        let val = if mark {
+            Self::AFSK_REG70_MARK
+        } else {
+            Self::AFSK_REG70_SPACE
+        };
+        self.write_reg(syst, REG_TONE_GAIN, val);
+    }
+
+    pub fn afsk_disable_tones(&mut self, syst: &mut SYST) {
+        self.write_reg(syst, REG_TONE_GAIN, 0x0000);
+        self.write_reg(syst, REG_TONE_FREQ, 0);
+        self.write_reg(syst, REG_FSK_BAUD, 0);
+    }
+
+    pub fn afsk_set_tone1_freq(&mut self, syst: &mut SYST, freq_word: u16) {
+        self.write_reg(syst, REG_TONE_FREQ, freq_word);
+    }
+
+    pub fn afsk_enable_tone1(&mut self, syst: &mut SYST) {
+        self.write_reg(syst, REG_TONE_GAIN, Self::AFSK_REG70_MARK);
+    }
+
+    const STATE_TX_TONE: u16 = 0xC3FA;
+
+    pub fn enter_tx_tone_state(&mut self, syst: &mut SYST) {
+        self.write_reg(syst, REG_STATE, 0x0000);
+        self.write_reg(syst, REG_STATE, Self::STATE_TX_TONE);
     }
 
     /// `REG_TONE_FREQ`/`REG_FSK_BAUD`'s frequency-word encoding when used as
