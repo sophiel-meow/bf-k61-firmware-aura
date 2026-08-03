@@ -11,6 +11,9 @@ impl<'a> ListSource for SettingsSource<'a> {
     }
 
     fn label(&mut self, index: usize, w: &mut dyn core::fmt::Write) {
+        if self.0.settings_suppress_label(index) {
+            return;
+        }
         let _ = write!(w, "{}", self.0.settings_label_at(index));
     }
 

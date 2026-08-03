@@ -480,9 +480,6 @@ fn dispatch_aprs_dev_name_input(app: &mut App, _syst: &mut SYST, ev: KeyEvent) {
                 .unwrap_or(6)
                 .min(6);
             dev[..len].copy_from_slice(&app.settings_ui.aprs_dev_name_edit.buf[..len]);
-            for b in dev.iter_mut().take(len) {
-                b.make_ascii_uppercase();
-            }
             app.settings_ui.editing = false;
             app.save_settings();
         }

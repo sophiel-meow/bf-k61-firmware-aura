@@ -1353,12 +1353,20 @@ impl App {
         settings::SETTINGS_ORDER[index].label()
     }
 
+    pub fn settings_suppress_label(&self, index: usize) -> bool {
+        self.settings_ui.is_editing(index)
+            && matches!(
+                settings::SETTINGS_ORDER[index],
+                settings::SettingItem::AprsComment
+            )
+    }
+
     pub fn settings_value_at(&self, index: usize, w: &mut dyn core::fmt::Write) {
         settings_ops::value_text_for(self, index, settings::SETTINGS_ORDER[index], w)
     }
 
     pub fn settings_cursor(&self, index: usize) -> Option<usize> {
-        if !self.settings_ui.editing {
+        if !self.settings_ui.is_editing(index) {
             return None;
         }
         match settings::SETTINGS_ORDER[index] {

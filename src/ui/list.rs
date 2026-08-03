@@ -69,20 +69,32 @@ pub(super) fn draw_list<D>(
 
         let mut label: TextBuf<16> = TextBuf::new();
         source.label(index, &mut label);
-        Text::new(
-            label.as_str(),
-            Point::new(4, baseline),
-            MonoTextStyle::new(&FONT_6X10, fg),
-        )
-        .draw(lcd)
-        .ok();
+        let label_is_empty = label.as_str().is_empty();
+
+        if !label_is_empty {
+            Text::new(
+                label.as_str(),
+                Point::new(4, baseline),
+                MonoTextStyle::new(&FONT_6X10, fg),
+            )
+            .draw(lcd)
+            .ok();
+        }
 
         let mut value: TextBuf<14> = TextBuf::new();
         if source.value(index, &mut value) {
             if let Some(cursor) = source.cursor(index) {
-                draw_value_with_cursor(lcd, value.as_str(), cursor, row_top, baseline, fg);
+                if label_is_empty {
+                    draw_value_with_cursor_left(
+                        lcd, value.as_str(), cursor, row_top, baseline, fg,
+                    );
+                } else {
+                    draw_value_with_cursor(lcd, value.as_str(), cursor, row_top, baseline, fg);
+                }
             } else if is_selected && show_arrows {
                 draw_editing_value(lcd, value.as_str(), row_top, fg);
+            } else if label_is_empty {
+                draw_value_left(lcd, value.as_str(), baseline, fg);
             } else {
                 draw_value(lcd, value.as_str(), baseline, fg);
             }
@@ -130,6 +142,19 @@ where
     .ok();
 }
 
+fn draw_value_left<D>(lcd: &mut D, text: &str, baseline_y: i32, fg: BinaryColor)
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    Text::new(
+        text,
+        Point::new(4, baseline_y),
+        MonoTextStyle::new(&FONT_6X10, fg),
+    )
+    .draw(lcd)
+    .ok();
+}
+
 fn draw_value_with_cursor<D>(
     lcd: &mut D,
     text: &str,
@@ -145,6 +170,40 @@ fn draw_value_with_cursor<D>(
     let char_w = FONT_6X10.character_size.width as i32;
     let width = text.chars().count() as i32 * char_w;
     let x0 = 128 - RIGHT_MARGIN - width;
+
+    draw_cursor_box(lcd, text, cursor_index, x0, row_top, baseline_y, fg);
+}
+
+fn draw_value_with_cursor_left<D>(
+    lcd: &mut D,
+    text: &str,
+    cursor_index: usize,
+    row_top: i32,
+    baseline_y: i32,
+    fg: BinaryColor,
+) where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    draw_value_left(lcd, text, baseline_y, fg);
+
+    let char_w = FONT_6X10.character_size.width as i32;
+    let x0 = 4i32;
+
+    draw_cursor_box(lcd, text, cursor_index, x0, row_top, baseline_y, fg);
+}
+
+fn draw_cursor_box<D>(
+    lcd: &mut D,
+    text: &str,
+    cursor_index: usize,
+    x0: i32,
+    row_top: i32,
+    baseline_y: i32,
+    fg: BinaryColor,
+) where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    let char_w = FONT_6X10.character_size.width as i32;
 
     if let Some(ch) = text.chars().nth(cursor_index) {
         let cursor_x = x0 + cursor_index as i32 * char_w;

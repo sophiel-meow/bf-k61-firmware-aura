@@ -672,7 +672,9 @@ pub fn value_text_for(app: &App, index: usize, item: SettingItem, w: &mut dyn Wr
                     .iter()
                     .position(|&b| b == 0)
                     .unwrap_or(comment.len());
-                for &b in &comment[..end] {
+                // Truncate to avoid overlapping the label in the list view
+                let n = end.min(10);
+                for &b in &comment[..n] {
                     let _ = w.write_char(if b == 0 || b == 0xFF { ' ' } else { b as char });
                 }
             }
