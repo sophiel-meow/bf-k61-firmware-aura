@@ -18,8 +18,7 @@ impl<'a> ListSource for SettingsSource<'a> {
     }
 
     fn value(&mut self, index: usize, w: &mut dyn core::fmt::Write) -> bool {
-        self.0.settings_value_at(index, w);
-        true
+        self.0.settings_value_at(index, w)
     }
 
     fn cursor(&mut self, index: usize) -> Option<usize> {
@@ -35,7 +34,7 @@ where
     let mut source = SettingsSource(app);
     draw_list(
         lcd,
-        "SETTINGS",
+        app.settings_title(),
         &mut source,
         app.settings_index(),
         app.settings_show_arrows(),

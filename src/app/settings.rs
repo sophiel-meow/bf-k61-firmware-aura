@@ -58,6 +58,111 @@ pub enum SettingItem {
     AprsPower,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SettingsGroup {
+    Radio,
+    Sig,
+    Display,
+    Keys,
+    Ani,
+    Aprs,
+    System,
+}
+
+pub const SETTINGS_GROUPS: [SettingsGroup; 7] = [
+    SettingsGroup::Radio,
+    SettingsGroup::Sig,
+    SettingsGroup::Display,
+    SettingsGroup::Keys,
+    SettingsGroup::Ani,
+    SettingsGroup::Aprs,
+    SettingsGroup::System,
+];
+
+impl SettingsGroup {
+    pub fn label(self) -> &'static str {
+        match self {
+            SettingsGroup::Radio => "RADIO",
+            SettingsGroup::Sig => "SIG",
+            SettingsGroup::Display => "DISP",
+            SettingsGroup::Keys => "KEYS",
+            SettingsGroup::Ani => "ANI",
+            SettingsGroup::Aprs => "APRS",
+            SettingsGroup::System => "SYSTEM",
+        }
+    }
+
+    pub fn items(self) -> &'static [SettingItem] {
+        match self {
+            SettingsGroup::Radio => &[
+                SettingItem::Sql,
+                SettingItem::Step,
+                SettingItem::Tot,
+                SettingItem::Tdr,
+                SettingItem::Save,
+                SettingItem::BusyLock,
+                SettingItem::TxForbid,
+                SettingItem::Wn,
+                SettingItem::TxPr,
+                SettingItem::RxCts,
+                SettingItem::TxCts,
+                SettingItem::Sftd,
+                SettingItem::Offse,
+                SettingItem::Scrm,
+                SettingItem::ScanMd,
+                SettingItem::Rit,
+                SettingItem::ChDisp,
+                SettingItem::BkIn,
+            ],
+            SettingsGroup::Sig => &[
+                SettingItem::Beep,
+                SettingItem::Vox,
+                SettingItem::VoxLv,
+                SettingItem::VoxDly,
+                SettingItem::Rtone,
+                SettingItem::Tail,
+                SettingItem::Rptrl,
+                SettingItem::Roge,
+            ],
+            SettingsGroup::Display => {
+                &[SettingItem::Abr, SettingItem::AutoLk, SettingItem::Contrast]
+            }
+            SettingsGroup::Keys => &[
+                SettingItem::Side1Short,
+                SettingItem::Side1Long,
+                SettingItem::Side2Short,
+                SettingItem::Side2Long,
+                SettingItem::BandShort,
+                SettingItem::BandLong,
+            ],
+            SettingsGroup::Ani => &[SettingItem::AniTx, SettingItem::AniCall],
+            SettingsGroup::Aprs => &[
+                SettingItem::AprsCall,
+                SettingItem::AprsFreq,
+                SettingItem::AprsLat,
+                SettingItem::AprsLon,
+                SettingItem::AprsPath,
+                SettingItem::AprsDevInfo,
+                SettingItem::AprsDevName,
+                SettingItem::AprsBatVolt,
+                SettingItem::AprsComment,
+                SettingItem::AprsSsid,
+                SettingItem::AprsSymbol,
+                SettingItem::AprsPower,
+            ],
+            SettingsGroup::System => &[
+                SettingItem::FLock,
+                SettingItem::BattCal,
+                SettingItem::BootMode,
+                SettingItem::BootSnd,
+                SettingItem::Info,
+                SettingItem::Reset,
+            ],
+        }
+    }
+}
+
+#[allow(dead_code)]
 pub const SETTINGS_ORDER: [SettingItem; 55] = [
     SettingItem::Sql,
     SettingItem::Step,
@@ -235,6 +340,9 @@ use super::input::DigitInput;
 use super::name_edit::NameEdit;
 
 pub(super) struct SettingsUi {
+    /// `None` = top-level group selection; `Some(g)` = inside a group.
+    pub(super) group: Option<SettingsGroup>,
+    /// Item index within the current group, or group index at top level.
     pub(super) index: usize,
     pub(super) editing: bool,
     pub(super) snapshot: i32,
@@ -265,6 +373,7 @@ pub(super) struct SettingsUi {
 impl SettingsUi {
     pub(super) const fn new() -> Self {
         SettingsUi {
+            group: None,
             index: 0,
             editing: false,
             snapshot: 0,

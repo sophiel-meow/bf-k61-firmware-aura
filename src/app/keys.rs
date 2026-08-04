@@ -238,7 +238,12 @@ fn dispatch_app_menu(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
 }
 
 fn dispatch_settings(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
-    let item = settings::SETTINGS_ORDER[app.settings_ui.index];
+    if app.settings_ui.group.is_none() {
+        dispatch_settings_group(app, syst, ev);
+        return;
+    }
+
+    let item = app.current_setting_item();
 
     if app.settings_ui.editing && item == settings::SettingItem::Offse {
         dispatch_offset_input(app, syst, ev);
@@ -278,7 +283,7 @@ fn dispatch_settings(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
             KeyId::Up | KeyId::Down => {
                 let up = ev.key == KeyId::Up;
                 if !app.settings_ui.editing {
-                    let len = settings::SETTINGS_ORDER.len();
+                    let len = app.settings_item_count();
                     app.settings_ui.index = if up {
                         (app.settings_ui.index + len - 1) % len
                     } else {
@@ -354,8 +359,38 @@ fn dispatch_settings(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
                     }
                     app.settings_ui.editing = false;
                 } else {
-                    settings_ops::exit(app);
+                    let current = app.settings_ui.group;
+                    app.settings_ui.group = None;
+                    app.settings_ui.index = current
+                        .and_then(|g| settings::SETTINGS_GROUPS.iter().position(|&grp| grp == g))
+                        .unwrap_or(0);
                 }
+            }
+            _ => {}
+        },
+        _ => {}
+    }
+}
+
+fn dispatch_settings_group(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
+    match ev.kind {
+        KeyEventKind::Single | KeyEventKind::Repeat => match ev.key {
+            KeyId::Up | KeyId::Down => {
+                let up = ev.key == KeyId::Up;
+                let len = settings::SETTINGS_GROUPS.len();
+                app.settings_ui.index = if up {
+                    (app.settings_ui.index + len - 1) % len
+                } else {
+                    (app.settings_ui.index + 1) % len
+                };
+            }
+            KeyId::Menu if ev.kind == KeyEventKind::Single => {
+                let group = settings::SETTINGS_GROUPS[app.settings_ui.index];
+                app.settings_ui.group = Some(group);
+                app.settings_ui.index = 0;
+            }
+            KeyId::Exit if ev.kind == KeyEventKind::Single => {
+                settings_ops::exit(app);
             }
             _ => {}
         },

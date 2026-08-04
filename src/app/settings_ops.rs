@@ -14,6 +14,8 @@ const RIT_STEP_HZ: i32 = 10;
 
 pub(super) fn enter(app: &mut App) {
     app.mode = Mode::Settings;
+    app.settings_ui.group = None;
+    app.settings_ui.index = 0;
     app.settings_ui.editing = false;
     app.input.clear();
 }

@@ -815,17 +815,35 @@ impl App {
     /// Whether to draw the up/down arrow chrome around the selected row's
     /// value: true for a cycled Settings item, false while it's in
     /// text-entry mode
+    /// Returns the currently selected setting item.
+    /// Panics if at the top-level group selection screen.
+    pub(super) fn current_setting_item(&self) -> settings::SettingItem {
+        self.settings_ui.group.expect("not at top level").items()[self.settings_ui.index]
+    }
+
+    pub fn settings_title(&self) -> &'static str {
+        match self.settings_ui.group {
+            Some(g) => g.label(),
+            None => "SETTINGS",
+        }
+    }
+
     pub fn settings_show_arrows(&self) -> bool {
+        if self.settings_ui.group.is_none() {
+            return false;
+        }
         self.settings_ui.editing
-            && settings::SETTINGS_ORDER[self.settings_ui.index] != settings::SettingItem::Offse
-            && settings::SETTINGS_ORDER[self.settings_ui.index] != settings::SettingItem::AprsCall
-            && settings::SETTINGS_ORDER[self.settings_ui.index]
-                != settings::SettingItem::AprsDevName
-            && settings::SETTINGS_ORDER[self.settings_ui.index]
-                != settings::SettingItem::AprsComment
-            && settings::SETTINGS_ORDER[self.settings_ui.index] != settings::SettingItem::AprsFreq
-            && settings::SETTINGS_ORDER[self.settings_ui.index] != settings::SettingItem::AprsLat
-            && settings::SETTINGS_ORDER[self.settings_ui.index] != settings::SettingItem::AprsLon
+            && !matches!(
+                self.current_setting_item(),
+                settings::SettingItem::Offse
+                    | settings::SettingItem::BattCal
+                    | settings::SettingItem::AprsCall
+                    | settings::SettingItem::AprsDevName
+                    | settings::SettingItem::AprsComment
+                    | settings::SettingItem::AprsFreq
+                    | settings::SettingItem::AprsLat
+                    | settings::SettingItem::AprsLon
+            )
     }
 
     pub fn settings_index(&self) -> usize {
@@ -833,30 +851,43 @@ impl App {
     }
 
     pub fn settings_item_count(&self) -> usize {
-        settings::SETTINGS_ORDER.len()
+        match self.settings_ui.group {
+            Some(g) => g.items().len(),
+            None => settings::SETTINGS_GROUPS.len(),
+        }
     }
 
     pub fn settings_label_at(&self, index: usize) -> &'static str {
-        settings::SETTINGS_ORDER[index].label()
+        match self.settings_ui.group {
+            Some(g) => g.items()[index].label(),
+            None => settings::SETTINGS_GROUPS[index].label(),
+        }
     }
 
     pub fn settings_suppress_label(&self, index: usize) -> bool {
-        self.settings_ui.is_editing(index)
+        self.settings_ui.group.is_some()
+            && self.settings_ui.is_editing(index)
             && matches!(
-                settings::SETTINGS_ORDER[index],
+                self.current_setting_item(),
                 settings::SettingItem::AprsComment
             )
     }
 
-    pub fn settings_value_at(&self, index: usize, w: &mut dyn core::fmt::Write) {
-        settings_ops::value_text_for(self, index, settings::SETTINGS_ORDER[index], w)
+    pub fn settings_value_at(&self, index: usize, w: &mut dyn core::fmt::Write) -> bool {
+        match self.settings_ui.group {
+            Some(g) => {
+                settings_ops::value_text_for(self, index, g.items()[index], w);
+                true
+            }
+            None => false, // top-level: no value, like the launcher
+        }
     }
 
     pub fn settings_cursor(&self, index: usize) -> Option<usize> {
         if !self.settings_ui.is_editing(index) {
             return None;
         }
-        match settings::SETTINGS_ORDER[index] {
+        match self.current_setting_item() {
             settings::SettingItem::AprsCall => Some(self.settings_ui.aprs_call_edit.cursor),
             settings::SettingItem::AprsDevName => Some(self.settings_ui.aprs_dev_name_edit.cursor),
             settings::SettingItem::AprsComment => Some(self.settings_ui.aprs_comment_edit.cursor),
@@ -909,7 +940,8 @@ impl App {
     pub fn poll_aprs_call_timeout(&mut self) {
         if self.mode == Mode::Settings
             && self.settings_ui.editing
-            && settings::SETTINGS_ORDER[self.settings_ui.index] == settings::SettingItem::AprsCall
+            && self.settings_ui.group.is_some()
+            && self.current_setting_item() == settings::SettingItem::AprsCall
         {
             self.settings_ui.aprs_call_edit.tick();
         }
@@ -918,8 +950,8 @@ impl App {
     pub fn poll_aprs_dev_name_timeout(&mut self) {
         if self.mode == Mode::Settings
             && self.settings_ui.editing
-            && settings::SETTINGS_ORDER[self.settings_ui.index]
-                == settings::SettingItem::AprsDevName
+            && self.settings_ui.group.is_some()
+            && self.current_setting_item() == settings::SettingItem::AprsDevName
         {
             self.settings_ui.aprs_dev_name_edit.tick();
         }
@@ -928,8 +960,8 @@ impl App {
     pub fn poll_aprs_comment_timeout(&mut self) {
         if self.mode == Mode::Settings
             && self.settings_ui.editing
-            && settings::SETTINGS_ORDER[self.settings_ui.index]
-                == settings::SettingItem::AprsComment
+            && self.settings_ui.group.is_some()
+            && self.current_setting_item() == settings::SettingItem::AprsComment
         {
             self.settings_ui.aprs_comment_edit.tick();
         }
