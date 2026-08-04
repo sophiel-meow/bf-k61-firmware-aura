@@ -232,7 +232,7 @@ where
                 );
             }
             ChannelDisplayMode::Name if has_name => {
-                let shown = &name[..name.len().min(8)];
+                let shown = &name[..name.len().min(9)];
                 draw_right_aligned(
                     lcd,
                     shown,
