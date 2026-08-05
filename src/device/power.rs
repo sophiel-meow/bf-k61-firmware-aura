@@ -29,6 +29,10 @@ impl Power {
         }
     }
 
+    pub fn switch_off_raw(&self) -> bool {
+        board::power_switch_off(self.gpioa)
+    }
+
     /// Full shutdown sequence: RF off, release power latch, wait for
     /// capacitors to drain, then reset (which will re-latch on next
     /// power-on if the switch is still held).

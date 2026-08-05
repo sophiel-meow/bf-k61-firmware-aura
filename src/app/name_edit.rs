@@ -111,7 +111,7 @@ impl<const N: usize> NameEdit<N> {
     }
 }
 
-pub(super) fn write_name_plain<const N: usize>(buf: &[u8; N], w: &mut dyn core::fmt::Write) {
+pub(crate) fn write_name_plain<const N: usize>(buf: &[u8; N], w: &mut dyn core::fmt::Write) {
     for &b in buf {
         let ch = if b == 0 || b == 0xFF { ' ' } else { b as char };
         let _ = w.write_char(ch);

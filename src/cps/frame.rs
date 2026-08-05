@@ -15,6 +15,9 @@ pub const CMD_READ_BOOT: u8 = 0x42; // 'B'
 pub const CMD_READ_LOGO: u8 = 0x4C; // 'L'
 pub const CMD_WRITE_LOGO: u8 = 0x6C; // 'l'
 
+pub const CMD_SSTV_ERASE: u8 = 0x53; // 'S'  — erase SSTV image sector
+pub const CMD_SSTV_WRITE: u8 = 0x73; // 's'  — write 64-byte chunk (ADDR=chunk index)
+
 pub const CMD_ERROR: u8 = 0xEE;
 
 pub const ERR_BAD_CRC: u8 = 0x01;

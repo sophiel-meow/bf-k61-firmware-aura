@@ -119,10 +119,8 @@ pub fn nrzi_encode_frame(raw: &[u8], num_tail_flags: usize, out: &mut [u8]) -> u
     let mut nrzi: u8 = 1; // start at mark (idle)
 
     let mut emit = |nrzi_bit: u8| {
-        if bit_pos / 8 < out.len() {
-            if nrzi_bit != 0 {
-                out[bit_pos / 8] |= 1 << (7 - (bit_pos % 8));
-            }
+        if bit_pos / 8 < out.len() && nrzi_bit != 0 {
+            out[bit_pos / 8] |= 1 << (7 - (bit_pos % 8));
         }
         bit_pos += 1;
     };

@@ -2,10 +2,9 @@ use super::list::{draw_list, ListSource};
 use super::standby;
 use super::TextBuf;
 use crate::app;
-use crate::app::satellite::sat_record::SatRecord;
 use crate::app::satellite::time;
 use crate::app::satellite::{DetailField, SatellitePage};
-use crate::flash_map::MAX_SATELLITES;
+use crate::flash_map::{MAX_SATELLITES, SatRecord};
 use core::fmt::Write as _;
 use embedded_graphics::mono_font::{
     ascii::{FONT_5X8, FONT_6X10},
@@ -601,8 +600,8 @@ fn write_digits_raw(w: &mut dyn core::fmt::Write, digits: &[u8], len: usize, suf
     if len == 0 {
         let _ = write!(w, "_{}", suffix);
     } else {
-        for i in 0..len {
-            let _ = write!(w, "{}", digits[i]);
+        for d in digits.iter().take(len) {
+            let _ = write!(w, "{}", d);
         }
         let _ = w.write_str(suffix);
     }

@@ -1,7 +1,6 @@
-use crate::app::satellite::sat_record::{SatRecord, SAT_RECORD_SIZE};
 use crate::drivers::fd6818::Power;
 use crate::drivers::norflash::{NorFlash, SECTOR_SIZE};
-use crate::flash_map::{self, addr, MAX_SATELLITES};
+use crate::flash_map::{self, addr, SatRecord, MAX_SATELLITES, SAT_RECORD_SIZE, SSTV_IMAGE_SIZE};
 use crate::hal::wear_leveled::WearLeveledRegion;
 
 /// Both VFO sides (A+B), combined into one wear-leveled record.
@@ -24,7 +23,7 @@ const CHANNEL_STATE_REGION: WearLeveledRegion<8> = WearLeveledRegion::new(addr::
 const SAT_TOTAL_BYTES: usize = MAX_SATELLITES * SAT_RECORD_SIZE;
 
 pub struct Storage {
-    norflash: NorFlash<'static>,
+    pub(crate) norflash: NorFlash<'static>,
     /// Bit `n` set = the channel-table sector `n` has already been erased
     /// during the current CPS write session. Reset at session start; see
     /// `write_channel` for why per-sector (not per-record) tracking is
@@ -255,6 +254,40 @@ impl Storage {
 
         self.norflash.erase_sector(sector_addr);
         self.norflash.write_bytes(sector_addr, &buf);
+    }
+
+    /// Check whether an SSTV background image is stored in SPI flash.
+    /// The sentinel byte at `SSTV_IMAGE_ADDR + SSTV_IMAGE_SIZE` is 0x00
+    /// when an image has been loaded, or 0xFF (erased) when not.
+    pub fn has_sstv_image(&mut self) -> bool {
+        let mut sentinel = [0xFFu8; 1];
+        let addr = addr::SSTV_IMAGE_ADDR + SSTV_IMAGE_SIZE as u32;
+        self.norflash.read_bytes(addr, &mut sentinel);
+        sentinel[0] == 0x00
+    }
+
+    /// Erase the SSTV image sector and set the sentinel.
+    pub fn erase_sstv_image(&mut self) {
+        let start_sector = (addr::SSTV_IMAGE_ADDR / SECTOR_SIZE) * SECTOR_SIZE;
+        let end = addr::SSTV_IMAGE_ADDR + SSTV_IMAGE_SIZE as u32;
+        let end_sector = ((end + SECTOR_SIZE) / SECTOR_SIZE) * SECTOR_SIZE;
+        for sector in (start_sector..end_sector).step_by(SECTOR_SIZE as usize) {
+            self.norflash.erase_sector(sector);
+        }
+        // Write sentinel: 0x00 = "image present"
+        let sentinel = [0x00u8; 1];
+        self.norflash
+            .write_bytes(addr::SSTV_IMAGE_ADDR + SSTV_IMAGE_SIZE as u32, &sentinel);
+    }
+
+    pub fn write_sstv_chunk(&mut self, offset: u32, data: &[u8]) {
+        self.norflash
+            .write_bytes(addr::SSTV_IMAGE_ADDR + offset, data);
+    }
+
+    pub fn read_sstv_chunk(&mut self, offset: u32, buf: &mut [u8]) {
+        self.norflash
+            .read_bytes(addr::SSTV_IMAGE_ADDR + offset, buf);
     }
 
     // factory reset

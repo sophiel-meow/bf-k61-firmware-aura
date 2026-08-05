@@ -260,6 +260,12 @@ fn main() -> ! {
             app.transmit_pending_aprs_beacon(&mut cp.SYST);
         }
 
+        if app.sstv_tx_pending() {
+            ui::draw(&mut display, &mut app);
+            display.flush();
+            app.transmit_pending_sstv(&mut cp.SYST, &power);
+        }
+
         // power sw
         if power.debounced_off(&mut cp.SYST) {
             writeln!(dbg, "power switch off, shutting down").ok();
@@ -292,9 +298,8 @@ fn main() -> ! {
                     let tx_freq = ui.active_tx_freq_hz;
                     let doppler_rx = ui.current_doppler_hz;
                     // Scale Doppler from RX to TX
-                    let doppler_tx = satellite::tracking::scale_doppler_to_tx(
-                        doppler_rx, rx_freq, tx_freq,
-                    );
+                    let doppler_tx =
+                        satellite::tracking::scale_doppler_to_tx(doppler_rx, rx_freq, tx_freq);
                     let tone_hz = app.sats()[app.satellite_ui().detail_index]
                         .map(|s| s.tx_tone_hz)
                         .unwrap_or(0);
@@ -313,8 +318,7 @@ fn main() -> ! {
                         wide,
                     ) {
                         app.set_transmitting_for_tracking();
-                        writeln!(dbg, "TRACKING TX ON @ {} Hz", tx_freq)
-                            .ok();
+                        writeln!(dbg, "TRACKING TX ON @ {} Hz", tx_freq).ok();
                     }
                 } else if !pressed && tracking_tx {
                     let ui = app.satellite_ui();
@@ -332,6 +336,8 @@ fn main() -> ! {
                     writeln!(dbg, "TRACKING RX ON @ {} Hz", rx_freq).ok();
                 }
             }
+        } else if app.mode() == app::Mode::Sstv {
+            app.handle_sstv_ptt(&mut cp.SYST);
         } else if matches!(
             app.side_modulation(app.master_index()),
             Modulation::Cw | Modulation::Cwf
@@ -355,6 +361,7 @@ fn main() -> ! {
         app.poll_aprs_comment_timeout();
         app.poll_contacts_name_timeout();
         app.poll_satellite_name_timeout();
+        app.poll_sstv_name_timeout();
 
         // Scan / Search / ScanQt / Fm / Spectrum (each self-guards on the
         // current mode)

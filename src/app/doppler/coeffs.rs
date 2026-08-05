@@ -49,7 +49,7 @@ pub const ELEV_THRESH_HIGH_70CM: u16 = 54 * 256 + 179; // 54.7°
 /// Select the appropriate Chebyshev-7 coefficient array for a given band and
 /// maximum elevation angle.
 pub fn select_cheb_coeffs(band: Band, max_el_deg: u16) -> &'static [i32; 8] {
-    let max_el_q8 = (max_el_deg as u16) << 8;
+    let max_el_q8 = max_el_deg << 8;
     match band {
         Band::Vhf => {
             if max_el_q8 <= ELEV_THRESH_LOW_2M {

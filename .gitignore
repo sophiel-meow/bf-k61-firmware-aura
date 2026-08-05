@@ -1,3 +1,4 @@
 /target
+/kd32f328-pac/target
 *.bin
 

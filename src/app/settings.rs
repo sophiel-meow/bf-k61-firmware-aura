@@ -87,7 +87,7 @@ impl SettingsGroup {
             SettingsGroup::Display => "DISP",
             SettingsGroup::Keys => "KEYS",
             SettingsGroup::Ani => "ANI",
-            SettingsGroup::Aprs => "APRS",
+            SettingsGroup::Aprs => "DIGI",
             SettingsGroup::System => "SYSTEM",
         }
     }
@@ -268,7 +268,7 @@ impl SettingItem {
             SettingItem::FLock => "FLOCK",
             SettingItem::Info => "INFO",
             SettingItem::Reset => "RESET",
-            SettingItem::AprsCall => "APRSCAL",
+            SettingItem::AprsCall => "CALLSIGN",
             SettingItem::AprsFreq => "APRSFRQ",
             SettingItem::AprsLat => "APRSLAT",
             SettingItem::AprsLon => "APRSLON",

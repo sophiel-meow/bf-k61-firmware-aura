@@ -3,8 +3,6 @@ use crate::hal::delay;
 use cortex_m::peripheral::SYST;
 use kd32f328_pac::gpiof;
 
-const BUS_DELAY_CYCLES: u32 = 96;
-
 const BIT_DELAY_US: u32 = 1;
 
 const REG_FREQ_LO: u8 = 0x38;
@@ -608,17 +606,21 @@ impl<'a> Fd6818<'a> {
     }
 
     /// Fixed tone gain for Bell 202 AFSK: TONE1 gain = 60, TONE2 gain = 60.
+    #[allow(dead_code)]
     const AFSK_TONE_GAIN: u16 = (60u16 << 8) | 60;
     /// REG_70 value enabling only TONE1 (1200 Hz mark).
     const AFSK_REG70_MARK: u16 = 0x8000 | (60u16 << 8);
     /// REG_70 value enabling only TONE2 (2200 Hz space).
+    #[allow(dead_code)]
     const AFSK_REG70_SPACE: u16 = 0x0080 | 60;
 
+    #[allow(dead_code)]
     pub fn afsk_config_tones(&mut self, syst: &mut SYST) {
         self.write_reg(syst, REG_TONE_FREQ, Self::tone_reg_word(1200));
         self.write_reg(syst, REG_FSK_BAUD, Self::tone_reg_word(2200));
     }
 
+    #[allow(dead_code)]
     pub fn afsk_set_tone(&mut self, syst: &mut SYST, mark: bool) {
         let val = if mark {
             Self::AFSK_REG70_MARK
@@ -773,6 +775,7 @@ impl<'a> Fd6818<'a> {
 
     /// Enables the raw FSK modem for byte-oriented framed TX/RX (the
     /// generic substrate; not a protocol encoder by itself)
+    #[allow(dead_code)]
     pub fn enter_fsk_mode(&mut self, syst: &mut SYST) {
         self.write_reg(syst, REG_FSK_PREAMBLE, 0x00C1);
         self.write_reg(syst, REG_TONE_GAIN, 0x00E0);
@@ -788,6 +791,7 @@ impl<'a> Fd6818<'a> {
         self.write_reg(syst, REG_WORK_MODE, WORK_MODE_FSK_RX);
     }
 
+    #[allow(dead_code)]
     pub fn exit_fsk_mode(&mut self, syst: &mut SYST) {
         self.write_reg(syst, REG_TONE_GAIN, 0x0000);
         self.write_reg(syst, REG_FSK_PREAMBLE, 0x0000);
@@ -796,6 +800,7 @@ impl<'a> Fd6818<'a> {
     /// Transmits one raw `FSK_FRAME_LEN`-word (16-byte) frame through the
     /// modem's FIFO and blocks until the chip reports it sent (or ~1s
     /// elapses without an ack)
+    #[allow(dead_code)]
     pub fn fsk_transmit(&mut self, syst: &mut SYST, data: &[u16; FSK_FRAME_LEN]) {
         self.write_reg(syst, REG_WORK_MODE, WORK_MODE_FSK_TX_IRQ);
         self.write_reg(
@@ -820,11 +825,13 @@ impl<'a> Fd6818<'a> {
     }
 
     /// True once a full raw FSK frame is ready to read.
+    #[allow(dead_code)]
     pub fn fsk_rx_ready(&mut self, syst: &mut SYST) -> bool {
         self.read_reg(syst, REG_WORK_MODE) & WORK_MODE_FSK_RX != 0
             && self.read_reg(syst, REG_STATUS) & 0x0001 != 0
     }
 
+    #[allow(dead_code)]
     pub fn fsk_receive(&mut self, syst: &mut SYST) -> [u16; FSK_FRAME_LEN] {
         let mut data = [0u16; FSK_FRAME_LEN];
         for slot in data.iter_mut() {

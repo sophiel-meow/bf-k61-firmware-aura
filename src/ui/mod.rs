@@ -12,6 +12,7 @@ mod search;
 mod settings;
 mod satellite;
 mod spectrum;
+mod sstv;
 mod standby;
 
 use chanmgr::draw_chanmgr;
@@ -19,6 +20,7 @@ use contacts::draw_contacts;
 use fm::draw_fm;
 use launcher::draw_app_menu;
 use satellite::draw_satellite;
+use sstv::draw_sstv;
 use scan::draw_scan;
 use scanqt::draw_scanqt;
 use search::draw_search;
@@ -74,6 +76,7 @@ pub fn draw<DI: WriteOnlyDataCommand>(display: &mut Display<'_, DI>, app: &mut a
         app::Mode::Satellite | app::Mode::SatelliteTracking => {
             draw_satellite(display.as_draw_target(), app);
         }
+        app::Mode::Sstv => draw_sstv(display.as_draw_target(), app),
         _ => draw_standby(display.as_draw_target(), &*app),
     }
     display.flush();

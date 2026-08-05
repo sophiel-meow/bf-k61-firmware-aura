@@ -72,10 +72,3 @@ pub(crate) fn ddmm_to_microdeg(ddmm: u32, _is_lat: bool) -> i32 {
     (deg * 100_000 + frac_microdeg) as i32
 }
 
-pub(crate) fn microdeg_to_ddmm(microdeg: i32, _is_lat: bool) -> u32 {
-    let v = microdeg.unsigned_abs();
-    let deg = v / 100_000;
-    let frac = v % 100_000;
-    let hundredths = (frac as u64 * 6 / 100) as u32; // 0..5999
-    deg * 10_000 + hundredths
-}

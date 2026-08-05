@@ -1,5 +1,4 @@
 pub mod keys;
-pub mod sat_record;
 pub mod time;
 pub mod tracking;
 
@@ -7,8 +6,7 @@ use super::doppler;
 use super::input::DigitInput;
 use super::name_edit::NameEdit;
 use crate::device::radio::Band;
-use crate::flash_map::MAX_SATELLITES;
-use sat_record::SatRecord;
+use crate::flash_map::{MAX_SATELLITES, SatRecord};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SatellitePage {
@@ -311,8 +309,8 @@ impl SatelliteUi {
         }
         let sat_pos = pos - 1;
         let mut found = 0;
-        for i in 0..MAX_SATELLITES {
-            if sats[i].is_some() {
+        for (i, slot) in sats.iter().enumerate() {
+            if slot.is_some() {
                 if found == sat_pos {
                     return Some(i);
                 }

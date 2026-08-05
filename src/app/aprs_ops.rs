@@ -1,5 +1,5 @@
 use super::ax25::aprs_packet::AprsConfig;
-use super::ax25::ax25::{self, Ax25Builder};
+use super::ax25::frame::{self, Ax25Builder};
 use super::App;
 use crate::flash_map::APRS_COORD_NOT_SET;
 
@@ -33,8 +33,6 @@ pub fn symbol_preset(idx: u8) -> (u8, u8, &'static str) {
     let i = (idx as usize).min(APRS_SYMBOLS.len() - 1);
     APRS_SYMBOLS[i]
 }
-
-const NRZI_BUF_SIZE: usize = 512;
 
 pub(super) fn send_beacon(app: &mut App) {
     if app.is_transmitting() || app.mode() != super::Mode::Standby {
@@ -116,8 +114,8 @@ pub(super) fn send_beacon(app: &mut App) {
     let mut builder = Ax25Builder::new();
     config.build_position_report(&mut builder);
 
-    let mut nrzi_buf = [0u8; NRZI_BUF_SIZE];
-    let total_bits = ax25::nrzi_encode_frame(builder.as_bytes(), 3, &mut nrzi_buf);
+    let mut nrzi_buf = [0u8; frame::MAX_NRZI_BYTES];
+    let total_bits = frame::nrzi_encode_frame(builder.as_bytes(), 3, &mut nrzi_buf);
 
     app.set_aprs_beacon_pending(nrzi_buf, total_bits);
 }

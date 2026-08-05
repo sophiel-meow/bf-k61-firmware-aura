@@ -1,15 +1,6 @@
-use super::ax25::Ax25Builder;
+use super::frame::Ax25Builder;
 
 pub const APRS_DEST_CALL: &[u8; 6] = b"APZK6X";
-
-pub const WIDE1_1: &[u8; 6] = b"WIDE1 ";
-pub const WIDE2_1: &[u8; 6] = b"WIDE2 ";
-
-pub const WIDE2_2: &[u8; 6] = b"WIDE2 ";
-
-pub const SYMBOL_HANDHELD: u8 = b'[';
-
-const MAX_STATUS_LEN: usize = 67;
 
 const MAX_POSITION_INFO_LEN: usize = 128;
 

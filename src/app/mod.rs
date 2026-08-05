@@ -9,12 +9,13 @@ mod input;
 mod keyfn;
 mod keys;
 mod launcher;
-mod name_edit;
+pub(crate) mod name_edit;
 pub mod satellite;
 mod scan;
 mod scanqt;
 mod search;
 mod settings;
+pub mod sstv;
 pub use settings::CTCSS_TABLE; // re-exported for UI tone display
 mod settings_ops;
 mod side;
@@ -28,6 +29,7 @@ use input::*;
 use crate::device::flashlight::Flashlight;
 use crate::device::fm_radio::FmRadio;
 use crate::device::keypad::Keypad;
+use crate::device::power::Power as PowerSwitch;
 use crate::device::radio::{
     BandLock, ChannelConfig, Modulation, Power, Radio, RogerTone, SubAudio,
 };
@@ -112,6 +114,7 @@ pub enum Mode {
     Spectrum,
     Satellite,
     SatelliteTracking,
+    Sstv,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -160,7 +163,7 @@ pub struct App {
     /// APRS beacon TX in progress, set by `send_beacon`, handled by main loop.
     aprs_beacon_pending: bool,
     /// NRZI-encoded bitstream for the pending APRS beacon.
-    aprs_beacon_nrzi: [u8; 512],
+    aprs_beacon_nrzi: [u8; ax25::frame::MAX_NRZI_BYTES],
     /// Number of valid bits in `aprs_beacon_nrzi`.
     aprs_beacon_nrzi_bits: usize,
     dual_standby: bool,
@@ -238,9 +241,11 @@ pub struct App {
     /// Satellite app UI state.
     satellite: satellite::SatelliteUi,
     /// Satellite records loaded from SPI flash.
-    sats: [Option<satellite::sat_record::SatRecord>; MAX_SATELLITES],
+    sats: [Option<flash_map::SatRecord>; MAX_SATELLITES],
     /// Active Doppler tracking state. `None` when not tracking.
     pub(crate) doppler: Option<doppler::DopplerState>,
+    /// SSTV app UI state.
+    pub sstv: sstv::SstvUi,
 }
 
 impl App {
@@ -355,6 +360,7 @@ impl App {
         radio.set_tx_allowed(BandLock::from_u8(settings.band_lock).tx_ranges());
 
         let sats = storage.load_satellites();
+        let has_sstv_image = storage.has_sstv_image();
 
         App {
             radio,
@@ -375,7 +381,7 @@ impl App {
             transmitting: false,
             tx_prohibited: false,
             aprs_beacon_pending: false,
-            aprs_beacon_nrzi: [0u8; 512],
+            aprs_beacon_nrzi: [0u8; ax25::frame::MAX_NRZI_BYTES],
             aprs_beacon_nrzi_bits: 0,
             flashlight,
             dual_standby: settings.dual_standby,
@@ -421,6 +427,10 @@ impl App {
             satellite: satellite::SatelliteUi::new(),
             sats,
             doppler: None,
+            sstv: sstv::SstvUi {
+                has_image: has_sstv_image,
+                ..sstv::SstvUi::new()
+            },
         }
     }
 
@@ -1103,24 +1113,12 @@ impl App {
         self.time_set
     }
 
-    pub fn sats(&self) -> &[Option<satellite::sat_record::SatRecord>; MAX_SATELLITES] {
+    pub fn sats(&self) -> &[Option<flash_map::SatRecord>; MAX_SATELLITES] {
         &self.sats
-    }
-
-    pub fn sats_mut(&mut self) -> &mut [Option<satellite::sat_record::SatRecord>; MAX_SATELLITES] {
-        &mut self.sats
     }
 
     pub fn satellite_ui(&self) -> &satellite::SatelliteUi {
         &self.satellite
-    }
-
-    pub fn satellite_ui_mut(&mut self) -> &mut satellite::SatelliteUi {
-        &mut self.satellite
-    }
-
-    pub fn doppler(&self) -> Option<&doppler::DopplerState> {
-        self.doppler.as_ref()
     }
 
     /// Set transmitting flag for tracking mode (bypasses normal PTT guards).
@@ -1191,7 +1189,7 @@ impl App {
         self.aprs_beacon_pending
     }
 
-    pub(super) fn set_aprs_beacon_pending(&mut self, nrzi: [u8; 512], bits: usize) {
+    pub(super) fn set_aprs_beacon_pending(&mut self, nrzi: [u8; ax25::frame::MAX_NRZI_BYTES], bits: usize) {
         self.aprs_beacon_nrzi = nrzi;
         self.aprs_beacon_nrzi_bits = bits;
         self.aprs_beacon_pending = true;
@@ -1223,6 +1221,74 @@ impl App {
         self.radio.enter_rx(syst);
         self.aprs_beacon_pending = false;
     }
+
+    pub fn sstv_tx_pending(&self) -> bool {
+        self.sstv.tx_pending
+    }
+
+    pub fn handle_sstv_ptt(&mut self, syst: &mut SYST) {
+        if self.mode != Mode::Sstv {
+            return;
+        }
+        // Only trigger on PTT press
+        if let Some(level) = self.radio.poll_ptt() {
+            if !level && !self.sstv.tx_pending && sstv::keys::handle_ptt(self) {
+                self.radio.play_beep(syst);
+            }
+        }
+    }
+
+    pub fn transmit_pending_sstv(&mut self, syst: &mut SYST, power: &PowerSwitch) {
+        let call = sstv::SstvUi::aprs_call_str(&self.settings);
+        let white = self.sstv.white_text;
+        let text = match self.sstv.tx_mode {
+            Some(sstv::TxMode::Cq) => sstv::tx::build_cq_lines(
+                call,
+                sstv::SstvUi::name_edit_str(&self.sstv.cq_m1),
+                sstv::SstvUi::name_edit_str(&self.sstv.cq_m2),
+                white,
+            ),
+            Some(sstv::TxMode::Qso) => sstv::tx::build_qso_lines(
+                sstv::SstvUi::name_edit_str(&self.sstv.qso_dx_call),
+                call,
+                sstv::SstvUi::name_edit_str(&self.sstv.qso_m1),
+                sstv::SstvUi::name_edit_str(&self.sstv.qso_m2),
+                white,
+            ),
+            None => return,
+        };
+
+        let has_image = self.sstv.has_image;
+
+        let tx_freq_hz = self.side_tx_freq_hz(self.master);
+        let subaudio_tx = self.side_subaudio_tx(self.master);
+
+        let completed = sstv::tx::transmit_sstv(
+            &mut self.radio,
+            &mut self.storage,
+            &mut self.keypad,
+            power,
+            syst,
+            has_image,
+            &text,
+            tx_freq_hz,
+            subaudio_tx,
+            &mut self.sstv.tx_line,
+        );
+
+        self.radio.enter_rx(syst);
+        self.sstv.tx_aborted = !completed;
+        self.sstv.tx_pending = false;
+        self.sstv.page = sstv::SstvPage::Main;
+        self.sstv.field_index = 0;
+    }
+
+    pub fn poll_sstv_name_timeout(&mut self) {
+        if self.mode == Mode::Sstv {
+            sstv::poll_name_timeout(&mut self.sstv);
+        }
+    }
+
     pub fn is_key_locked(&self) -> bool {
         self.key_lock
     }

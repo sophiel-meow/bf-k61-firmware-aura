@@ -10,6 +10,7 @@ pub enum LauncherEntry {
     Search,
     Spectrum,
     Satellite,
+    Sstv,
 }
 
 pub const LAUNCHER_ITEMS: &[LauncherEntry] = &[
@@ -21,6 +22,7 @@ pub const LAUNCHER_ITEMS: &[LauncherEntry] = &[
     LauncherEntry::Search,
     LauncherEntry::Spectrum,
     LauncherEntry::Satellite,
+    LauncherEntry::Sstv,
 ];
 
 impl LauncherEntry {
@@ -34,6 +36,7 @@ impl LauncherEntry {
             LauncherEntry::Search => "FREQ HUNT",
             LauncherEntry::Spectrum => "SPECTRUM",
             LauncherEntry::Satellite => "SATELLITE",
+            LauncherEntry::Sstv => "SSTV",
         }
     }
 
@@ -47,6 +50,7 @@ impl LauncherEntry {
             LauncherEntry::Search => true,
             LauncherEntry::Spectrum => true,
             LauncherEntry::Satellite => true,
+            LauncherEntry::Sstv => true,
         }
     }
 
@@ -60,6 +64,7 @@ impl LauncherEntry {
             LauncherEntry::Search => Mode::Search,
             LauncherEntry::Spectrum => Mode::Spectrum,
             LauncherEntry::Satellite => Mode::Satellite,
+            LauncherEntry::Sstv => Mode::Sstv,
         }
     }
 }

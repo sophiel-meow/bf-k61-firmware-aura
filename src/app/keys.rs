@@ -4,6 +4,7 @@ use super::fm;
 use super::keyfn;
 use super::launcher::{LauncherEntry, LAUNCHER_ITEMS};
 use super::satellite;
+use super::sstv;
 use super::settings;
 use super::settings_ops;
 use super::{
@@ -59,6 +60,7 @@ pub(super) fn dispatch(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
         Mode::Fm => fm::dispatch(app, syst, ev),
         Mode::Spectrum => spectrum::dispatch(app, syst, ev),
         Mode::Satellite | Mode::SatelliteTracking => satellite::keys::dispatch(app, syst, ev),
+        Mode::Sstv => sstv::keys::dispatch(app, syst, ev),
     }
 }
 
@@ -229,6 +231,12 @@ fn dispatch_app_menu(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
                             app.mode = Mode::Satellite;
                             app.satellite.page = satellite::SatellitePage::List;
                         }
+                        LauncherEntry::Sstv => {
+                            app.mode = Mode::Sstv;
+                            app.sstv.page = sstv::SstvPage::Main;
+                            app.sstv.field_index = 0;
+                            app.sstv.editing = false;
+                        }
                     }
                     debug_assert!(app.mode == entry.target_mode());
                 }
@@ -378,7 +386,7 @@ fn dispatch_settings(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
     }
 }
 
-fn dispatch_settings_group(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
+fn dispatch_settings_group(app: &mut App, _syst: &mut SYST, ev: KeyEvent) {
     match ev.kind {
         KeyEventKind::Single | KeyEventKind::Repeat => match ev.key {
             KeyId::Up | KeyId::Down => {

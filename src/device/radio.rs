@@ -293,9 +293,9 @@ const DTMF_RX_TIMEOUT_TICKS: u8 = 40;
 const DTMF_RX_MAX_DIGITS: usize = 16;
 
 pub struct Radio {
-    fd6818: Fd6818<'static>,
+    pub(crate) fd6818: Fd6818<'static>,
     gpioa: &'static gpioa::RegisterBlock,
-    gpiob: &'static gpiof::RegisterBlock,
+    pub(crate) gpiob: &'static gpiof::RegisterBlock,
     adc: adc::Adc<'static>,
     ptt_debouncer: debounce::Debouncer,
     cfg: ChannelConfig,
@@ -987,6 +987,7 @@ impl Radio {
         true
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn transmit_afsk(
         &mut self,
         syst: &mut SYST,
@@ -1047,6 +1048,48 @@ impl Radio {
         self.fd6818.afsk_set_tone1_freq(syst, tone_mark);
         delay::ms(syst, tx_tail_ms);
 
+        self.fd6818.afsk_disable_tones(syst);
+        self.fd6818.pa_off(syst);
+        self.fd6818.set_tx_band_off(syst);
+        self.fd6818.set_tx_led(syst, false);
+        board::set_speaker_switch(self.gpiob, false);
+        self.fd6818
+            .set_af_out(syst, AfOutState::Mute, true, Modulation::Fm);
+    }
+
+    pub fn enter_tx_sstv(
+        &mut self,
+        syst: &mut SYST,
+        tx_freq_hz: u32,
+        subaudio_tx: SubAudio,
+        initial_tone: u16,
+    ) {
+        self.fd6818.set_frequency_hz(syst, tx_freq_hz);
+        self.fd6818.set_wide_bandwidth(syst, true);
+        self.fd6818.set_subaudio_tx(syst, subaudio_tx);
+        self.fd6818.pa_enable(syst, Power::Low);
+        if tx_freq_hz >= 300_000_000 {
+            self.fd6818.set_tx_band_uhf(syst);
+        } else {
+            self.fd6818.set_tx_band_vhf(syst);
+        }
+        self.fd6818.afsk_set_tone1_freq(syst, initial_tone);
+        self.fd6818.afsk_enable_tone1(syst);
+        self.fd6818.enter_tx_tone_state(syst);
+        self.fd6818
+            .set_af_out(syst, AfOutState::Beep, true, Modulation::Fm);
+        self.fd6818.set_tx_led(syst, true);
+        board::set_speaker_switch(self.gpiob, true);
+    }
+
+    #[inline(always)]
+    pub fn sstv_set_tone(&mut self, syst: &mut SYST, word: u16) {
+        self.fd6818.afsk_set_tone1_freq(syst, word);
+    }
+
+    /// Tear down an `enter_tx_sstv` session and return to idle (the caller
+    /// still needs to call `enter_rx` afterward to resume receiving).
+    pub fn exit_tx_sstv(&mut self, syst: &mut SYST) {
         self.fd6818.afsk_disable_tones(syst);
         self.fd6818.pa_off(syst);
         self.fd6818.set_tx_band_off(syst);

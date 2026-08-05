@@ -1,4 +1,3 @@
-use super::sat_record::SatRecord;
 use super::tracking;
 use super::{DetailField, SatellitePage, SatelliteUi};
 use crate::app::digit_value;
@@ -6,7 +5,7 @@ use crate::app::settings::ctcss_index;
 use crate::app::settings::CTCSS_TABLE;
 use crate::app::{App, Mode};
 use crate::device::keypad::{KeyEvent, KeyEventKind, KeyId};
-use crate::flash_map::MAX_SATELLITES;
+use crate::flash_map::{MAX_SATELLITES, SatRecord};
 use cortex_m::peripheral::SYST;
 
 pub(crate) fn dispatch(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
@@ -100,8 +99,8 @@ fn dispatch_detail(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
     let time_set = app.time_set;
 
     if ui.editing && ui.detail_field == DetailField::Delete {
-        match ev.kind {
-            KeyEventKind::Single => match ev.key {
+        if ev.kind == KeyEventKind::Single {
+            match ev.key {
                 KeyId::Menu => {
                     sats[ui.detail_index] = None;
                     ui.page = SatellitePage::List;
@@ -112,8 +111,7 @@ fn dispatch_detail(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
                     ui.editing = false;
                 }
                 _ => {}
-            },
-            _ => {}
+            }
         }
         return;
     }
@@ -392,13 +390,10 @@ fn dispatch_time_set(app: &mut App, ev: KeyEvent) {
                 }
             }
         },
-        KeyEventKind::Long => match ev.key {
-            KeyId::Exit => {
-                ui.page = SatellitePage::List;
-                app.mode = Mode::Satellite;
-            }
-            _ => {}
-        },
+        KeyEventKind::Long if ev.key == KeyId::Exit => {
+            ui.page = SatellitePage::List;
+            app.mode = Mode::Satellite;
+        }
         _ => {}
     }
 }
@@ -558,10 +553,8 @@ fn commit_freq(ui: &mut SatelliteUi, sat: &mut SatRecord) {
                 sat.rx_freq_hz = hz;
             }
         }
-        DetailField::TxFreq => {
-            if hz == 0 || hz >= 10_000_000 {
-                sat.tx_freq_hz = hz;
-            }
+        DetailField::TxFreq if hz == 0 || hz >= 10_000_000 => {
+            sat.tx_freq_hz = hz;
         }
         _ => {}
     }

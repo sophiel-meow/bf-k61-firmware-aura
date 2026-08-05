@@ -52,6 +52,8 @@ pub mod addr {
     pub const BATTERY_CAL_ADDR: u32 = 0x9300;
 
     pub const SAT_ADDR: u32 = 0x000D_0000; // voice prompt file for original fw
+
+    pub const SSTV_IMAGE_ADDR: u32 = 0x000D_1000;
 }
 
 /// Maximum number of satellites stored in SPI flash.
@@ -61,6 +63,14 @@ pub const MAX_SATELLITES: usize = 20;
 /// x 128 columns x 1 byte/column, the ST7565 controller's native page
 /// format (bit0 = top row of the page).
 pub const BOOT_LOGO_SIZE: usize = 1024;
+
+/// Robot 36 SSTV image record footprint at `addr::SSTV_IMAGE_ADDR`: 240 rows
+/// x (320 Y + 160 chroma) bytes/row, i.e. `app::sstv::tx::ROW_STRIDE *
+/// app::sstv::tx::TOTAL_LINES`. Duplicated here as a plain literal (like
+/// `BOOT_LOGO_SIZE`) so `device::storage` doesn't need to import from
+/// `app`; `app::sstv::tx` has a compile-time assert keeping the two in
+/// sync.
+pub const SSTV_IMAGE_SIZE: usize = 115_200;
 
 /// Both on-flash frequency encodings share the same logical unit: whole
 /// decimal digits of deci-Hz (frequency in Hz, divided by 10). Channel
@@ -166,7 +176,7 @@ impl Channel {
         }
     }
 
-    pub fn to_bytes(&self) -> [u8; addr::CHAN_SIZE as usize] {
+    pub fn to_bytes(self) -> [u8; addr::CHAN_SIZE as usize] {
         let mut buf = [0u8; addr::CHAN_SIZE as usize];
         buf[0..4].copy_from_slice(&self.rx_freq_bcd);
         buf[4..8].copy_from_slice(&self.tx_freq_bcd);
@@ -276,7 +286,7 @@ impl Contact {
         }
     }
 
-    pub fn to_bytes(&self) -> [u8; addr::CONTACT_SIZE as usize] {
+    pub fn to_bytes(self) -> [u8; addr::CONTACT_SIZE as usize] {
         let mut buf = [0u8; addr::CONTACT_SIZE as usize];
         buf[0..5].copy_from_slice(&self.id_raw);
         buf[5..16].copy_from_slice(&self.name);
@@ -333,7 +343,7 @@ impl VfoMode {
         }
     }
 
-    pub fn to_bytes(&self) -> [u8; addr::VFO_SIZE as usize] {
+    pub fn to_bytes(self) -> [u8; addr::VFO_SIZE as usize] {
         let mut buf = [0u8; addr::VFO_SIZE as usize];
         buf[0..8].copy_from_slice(&self.freq_digits);
         buf[8..10].copy_from_slice(&self.rx_dcs_cts_num.to_le_bytes());
@@ -404,6 +414,72 @@ impl VfoMode {
         } else {
             self.vfo_flags &= !0x40;
         }
+    }
+}
+
+/// On-flash satellite record: `MAX_SATELLITES` slots of `SAT_RECORD_SIZE`
+/// bytes each, starting at `addr::SAT_ADDR`.
+#[derive(Clone, Copy)]
+pub struct SatRecord {
+    pub name: [u8; 10],
+    /// Downlink (RX) frequency in Hz.
+    pub rx_freq_hz: u32,
+    /// Uplink (TX) frequency in Hz. 0 means RX-only.
+    pub tx_freq_hz: u32,
+    /// Downlink subaudio tone in tenths of Hz (0 = none).
+    pub rx_tone_hz: u16,
+    /// Uplink subaudio tone in tenths of Hz (0 = none).
+    pub tx_tone_hz: u16,
+    /// Orbital altitude in km.
+    pub altitude_km: u16,
+    /// Reserved flags.
+    pub flags: u8,
+    _pad: [u8; 3],
+}
+
+pub const SAT_RECORD_SIZE: usize = 32;
+
+impl SatRecord {
+    pub const BLANK: SatRecord = SatRecord {
+        name: [0; 10],
+        rx_freq_hz: 0,
+        tx_freq_hz: 0,
+        rx_tone_hz: 0,
+        tx_tone_hz: 0,
+        altitude_km: 0,
+        flags: 0,
+        _pad: [0; 3],
+    };
+
+    pub fn from_bytes(buf: &[u8; SAT_RECORD_SIZE]) -> Option<SatRecord> {
+        if buf.iter().all(|&b| b == 0xFF) {
+            return None;
+        }
+        let mut name = [0u8; 10];
+        name.copy_from_slice(&buf[0..10]);
+        Some(SatRecord {
+            name,
+            rx_freq_hz: u32::from_le_bytes([buf[10], buf[11], buf[12], buf[13]]),
+            tx_freq_hz: u32::from_le_bytes([buf[14], buf[15], buf[16], buf[17]]),
+            rx_tone_hz: u16::from_le_bytes([buf[18], buf[19]]),
+            tx_tone_hz: u16::from_le_bytes([buf[20], buf[21]]),
+            altitude_km: u16::from_le_bytes([buf[22], buf[23]]),
+            flags: buf[24],
+            _pad: [buf[25], buf[26], buf[27]],
+        })
+    }
+
+    pub fn to_bytes(self) -> [u8; SAT_RECORD_SIZE] {
+        let mut buf = [0u8; SAT_RECORD_SIZE];
+        buf[0..10].copy_from_slice(&self.name);
+        buf[10..14].copy_from_slice(&self.rx_freq_hz.to_le_bytes());
+        buf[14..18].copy_from_slice(&self.tx_freq_hz.to_le_bytes());
+        buf[18..20].copy_from_slice(&self.rx_tone_hz.to_le_bytes());
+        buf[20..22].copy_from_slice(&self.tx_tone_hz.to_le_bytes());
+        buf[22..24].copy_from_slice(&self.altitude_km.to_le_bytes());
+        buf[24] = self.flags;
+        // last 7 bytes are padding (already 0)
+        buf
     }
 }
 
@@ -651,7 +727,7 @@ impl Settings {
             aprs_callsign: aprs_call,
             aprs_lat: {
                 let v = i32::from_le_bytes([buf[170], buf[171], buf[172], buf[173]]);
-                if v >= -90_00000 && v <= 90_00000 {
+                if (-90_00000..=90_00000).contains(&v) {
                     v
                 } else {
                     APRS_COORD_NOT_SET
@@ -659,7 +735,7 @@ impl Settings {
             },
             aprs_lon: {
                 let v = i32::from_le_bytes([buf[174], buf[175], buf[176], buf[177]]);
-                if v >= -180_00000 && v <= 180_00000 {
+                if (-180_00000..=180_00000).contains(&v) {
                     v
                 } else {
                     APRS_COORD_NOT_SET
@@ -677,7 +753,7 @@ impl Settings {
         }
     }
 
-    pub fn to_bytes(&self) -> [u8; SETTINGS_BYTES] {
+    pub fn to_bytes(self) -> [u8; SETTINGS_BYTES] {
         let mut buf = [0u8; SETTINGS_BYTES];
         buf[0] = self.sql_level;
         buf[1] = self.tail_elimination as u8;

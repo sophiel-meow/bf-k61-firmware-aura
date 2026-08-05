@@ -6,8 +6,7 @@ use display_interface::WriteOnlyDataCommand;
 
 use crate::app::App;
 use crate::device::display::Display;
-use crate::app::satellite::sat_record::SAT_RECORD_SIZE;
-use crate::flash_map::{self, addr, MAX_SATELLITES};
+use crate::flash_map::{self, addr, MAX_SATELLITES, SAT_RECORD_SIZE};
 use crate::hal::clock::SYSCLK_HZ;
 use crate::hal::delay;
 use crate::hal::uart::{self, DebugUart};
@@ -104,6 +103,10 @@ pub fn run_session<DI: WriteOnlyDataCommand>(
             frame::CMD_WRITE_LOGO => {
                 handle_write_logo(app, dbg, frame.addr, &frame.data[..frame.len])
             }
+            frame::CMD_SSTV_ERASE => handle_sstv_erase(app, dbg),
+            frame::CMD_SSTV_WRITE => {
+                handle_sstv_write(app, dbg, frame.addr, &frame.data[..frame.len])
+            }
             frame::CMD_END => {
                 send_response(dbg, frame::CMD_END, frame.addr, &[]);
                 delay::ms(syst, 5); // let the ACK bytes drain out before reset
@@ -173,7 +176,7 @@ fn handle_read(app: &mut App, dbg: &mut DebugUart, wire_addr: u16) {
         Some(2)
     } else if (SAT_CPS_BASE..SAT_CPS_BASE + MAX_SATELLITES as u32 * SAT_RECORD_SIZE as u32)
         .contains(&logical)
-        && logical.wrapping_sub(SAT_CPS_BASE) % SAT_RECORD_SIZE as u32 == 0
+        && logical.wrapping_sub(SAT_CPS_BASE).is_multiple_of(SAT_RECORD_SIZE as u32)
     {
         let idx = (logical - SAT_CPS_BASE) as usize / SAT_RECORD_SIZE;
         let sats = app.storage_mut().load_satellites();
@@ -262,7 +265,7 @@ fn handle_write(app: &mut App, dbg: &mut DebugUart, wire_addr: u16, data: &[u8])
         true
     } else if (SAT_CPS_BASE..SAT_CPS_BASE + MAX_SATELLITES as u32 * SAT_RECORD_SIZE as u32)
         .contains(&logical)
-        && logical.wrapping_sub(SAT_CPS_BASE) % SAT_RECORD_SIZE as u32 == 0
+        && logical.wrapping_sub(SAT_CPS_BASE).is_multiple_of(SAT_RECORD_SIZE as u32)
         && data.len() == SAT_RECORD_SIZE
     {
         let idx = (logical - SAT_CPS_BASE) as usize / SAT_RECORD_SIZE;
@@ -349,4 +352,23 @@ fn send_response(dbg: &mut DebugUart, cmd: u8, addr: u16, data: &[u8]) {
 
 fn send_error(dbg: &mut DebugUart, addr: u16, code: u8) {
     send_response(dbg, frame::CMD_ERROR, addr, &[code]);
+}
+
+/// SSTV chunk size: 64 bytes per frame.
+const SSTV_CHUNK: u32 = 64;
+
+fn handle_sstv_erase(app: &mut App, dbg: &mut DebugUart) {
+    app.storage_mut().erase_sstv_image();
+    send_response(dbg, frame::CMD_SSTV_ERASE, 0, &[]);
+}
+
+fn handle_sstv_write(app: &mut App, dbg: &mut DebugUart, wire_addr: u16, data: &[u8]) {
+    let chunk_idx = wire_addr as u32;
+    if data.len() != SSTV_CHUNK as usize {
+        send_error(dbg, wire_addr, frame::ERR_BAD_LEN);
+        return;
+    }
+    let offset = chunk_idx * SSTV_CHUNK;
+    app.storage_mut().write_sstv_chunk(offset, data);
+    send_response(dbg, frame::CMD_SSTV_WRITE, wire_addr, &[]);
 }
