@@ -6,7 +6,8 @@ use display_interface::WriteOnlyDataCommand;
 
 use crate::app::App;
 use crate::device::display::Display;
-use crate::flash_map::{self, addr};
+use crate::app::satellite::sat_record::SAT_RECORD_SIZE;
+use crate::flash_map::{self, addr, MAX_SATELLITES};
 use crate::hal::clock::SYSCLK_HZ;
 use crate::hal::delay;
 use crate::hal::uart::{self, DebugUart};
@@ -15,6 +16,10 @@ use crate::ui;
 const HANDSHAKE: &[u8] = b"PROGRAMBF-K6AURA";
 const ACK: u8 = 0x06;
 const IDLE_TIMEOUT_MS: u32 = 2000;
+
+/// Virtual CPS address base for satellite records.
+/// Satellite n (0..19) lives at `SAT_CPS_BASE + n * SAT_RECORD_SIZE`.
+const SAT_CPS_BASE: u32 = 0xD000;
 
 pub struct HandshakeDetector {
     matched: usize,
@@ -55,6 +60,7 @@ pub fn run_session<DI: WriteOnlyDataCommand>(
 ) -> ! {
     app.radio_mut().rf_off(syst);
     app.storage_mut().reset_channel_write_session();
+    app.storage_mut().reset_sat_write_session();
     dbg.write_byte(ACK);
 
     ui::cps::draw_programming(display.as_draw_target());
@@ -165,6 +171,20 @@ fn handle_read(app: &mut App, dbg: &mut DebugUart, wire_addr: u16) {
             .unwrap_or(flash_map::Settings::DEFAULT);
         buf[..2].copy_from_slice(&settings.battery_cal_raw.to_le_bytes());
         Some(2)
+    } else if (SAT_CPS_BASE..SAT_CPS_BASE + MAX_SATELLITES as u32 * SAT_RECORD_SIZE as u32)
+        .contains(&logical)
+        && logical.wrapping_sub(SAT_CPS_BASE) % SAT_RECORD_SIZE as u32 == 0
+    {
+        let idx = (logical - SAT_CPS_BASE) as usize / SAT_RECORD_SIZE;
+        let sats = app.storage_mut().load_satellites();
+        let bytes = if let Some(sat) = sats[idx] {
+            sat.to_bytes()
+        } else {
+            [0xFFu8; SAT_RECORD_SIZE]
+        };
+        let len = SAT_RECORD_SIZE;
+        buf[..len].copy_from_slice(&bytes);
+        Some(len)
     } else {
         None
     };
@@ -239,6 +259,15 @@ fn handle_write(app: &mut App, dbg: &mut DebugUart, wire_addr: u16, data: &[u8])
             .unwrap_or(flash_map::Settings::DEFAULT);
         settings.battery_cal_raw = u16::from_le_bytes([data[0], data[1]]);
         app.storage_mut().save_settings(&settings);
+        true
+    } else if (SAT_CPS_BASE..SAT_CPS_BASE + MAX_SATELLITES as u32 * SAT_RECORD_SIZE as u32)
+        .contains(&logical)
+        && logical.wrapping_sub(SAT_CPS_BASE) % SAT_RECORD_SIZE as u32 == 0
+        && data.len() == SAT_RECORD_SIZE
+    {
+        let idx = (logical - SAT_CPS_BASE) as usize / SAT_RECORD_SIZE;
+        let record: [u8; SAT_RECORD_SIZE] = data.try_into().unwrap();
+        app.storage_mut().write_satellite(idx, &record);
         true
     } else {
         false

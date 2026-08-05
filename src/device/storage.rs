@@ -30,6 +30,9 @@ pub struct Storage {
     /// `write_channel` for why per-sector (not per-record) tracking is
     /// enough.
     channel_erased_mask: u8,
+    /// True once the satellite sector has been erased during the current
+    /// CPS write session. All 20 satellite slots share a single sector.
+    sat_erased: bool,
 }
 
 impl Storage {
@@ -37,6 +40,7 @@ impl Storage {
         Self {
             norflash,
             channel_erased_mask: 0,
+            sat_erased: false,
         }
     }
 
@@ -290,5 +294,30 @@ impl Storage {
 
         self.norflash.erase_sector(sector_addr);
         self.norflash.write_bytes(sector_addr, &buf);
+    }
+
+    /// Call once at the start of a CPS write session, before any
+    /// `write_satellite` calls, so the satellite sector gets erased
+    /// exactly once for the session.
+    pub fn reset_sat_write_session(&mut self) {
+        self.sat_erased = false;
+    }
+
+    /// Write a single satellite record. The first call in a CPS session
+    /// erases the satellite sector; subsequent calls only write their
+    /// 32-byte slot. The caller MUST write all 20 slots (empty slots as
+    /// `[0xFF; 32]`) to ensure the other 19 records don't stay in an
+    /// indeterminate state, erased-flash bytes (0xFF) decode as `None`,
+    /// which is the correct "empty slot" representation.
+    pub fn write_satellite(&mut self, idx: usize, record: &[u8; SAT_RECORD_SIZE]) {
+        let record_addr = addr::SAT_ADDR + idx as u32 * SAT_RECORD_SIZE as u32;
+
+        if !self.sat_erased {
+            let sector_addr = (record_addr / SECTOR_SIZE) * SECTOR_SIZE;
+            self.norflash.erase_sector(sector_addr);
+            self.sat_erased = true;
+        }
+
+        self.norflash.write_bytes(record_addr, record);
     }
 }
