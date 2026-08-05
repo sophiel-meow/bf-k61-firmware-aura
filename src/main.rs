@@ -16,6 +16,7 @@ use cortex_m_rt::entry;
 use kd32f328_pac::Peripherals;
 use panic_halt as _;
 
+use app::satellite;
 use device::display::{Backlight, Display};
 use device::flashlight::Flashlight;
 use device::fm_radio::FmRadio;
@@ -273,8 +274,65 @@ fn main() -> ! {
             writeln!(dbg, "batt bars: {}", app.battery_bars()).ok();
         }
 
+        // Wall clock tick + Doppler update
+        if due.every_100ms && app.poll_wall_clock() {
+            app.poll_doppler_update(&mut cp.SYST);
+        }
+
         // PTT / CW key. CW bypasses the voice-PTT debouncer entirely
-        if matches!(
+        // Satellite tracking has its own dedicated PTT path.
+        if app.mode() == app::Mode::SatelliteTracking {
+            let ptt_level = app.radio_mut().poll_ptt();
+            let tracking_tx = app.is_transmitting();
+            if let Some(level) = ptt_level {
+                let pressed = !level;
+                if pressed && !tracking_tx {
+                    let ui = app.satellite_ui();
+                    let rx_freq = ui.active_rx_freq_hz;
+                    let tx_freq = ui.active_tx_freq_hz;
+                    let doppler_rx = ui.current_doppler_hz;
+                    // Scale Doppler from RX to TX
+                    let doppler_tx = satellite::tracking::scale_doppler_to_tx(
+                        doppler_rx, rx_freq, tx_freq,
+                    );
+                    let tone_hz = app.sats()[app.satellite_ui().detail_index]
+                        .map(|s| s.tx_tone_hz)
+                        .unwrap_or(0);
+                    let subaudio = if tone_hz > 0 {
+                        SubAudio::Ctcss(tone_hz)
+                    } else {
+                        SubAudio::None
+                    };
+                    let wide = ui.tracking_wide;
+                    if satellite::tracking::tracking_ptt_press(
+                        app.radio_mut(),
+                        &mut cp.SYST,
+                        tx_freq,
+                        doppler_tx,
+                        subaudio,
+                        wide,
+                    ) {
+                        app.set_transmitting_for_tracking();
+                        writeln!(dbg, "TRACKING TX ON @ {} Hz", tx_freq)
+                            .ok();
+                    }
+                } else if !pressed && tracking_tx {
+                    let ui = app.satellite_ui();
+                    let rx_freq = ui.active_rx_freq_hz;
+                    let doppler_rx = ui.current_doppler_hz;
+                    let wide = ui.tracking_wide;
+                    satellite::tracking::tracking_ptt_release(
+                        app.radio_mut(),
+                        &mut cp.SYST,
+                        rx_freq,
+                        doppler_rx,
+                        wide,
+                    );
+                    app.clear_transmitting_for_tracking();
+                    writeln!(dbg, "TRACKING RX ON @ {} Hz", rx_freq).ok();
+                }
+            }
+        } else if matches!(
             app.side_modulation(app.master_index()),
             Modulation::Cw | Modulation::Cwf
         ) {
@@ -296,6 +354,7 @@ fn main() -> ! {
         app.poll_aprs_dev_name_timeout();
         app.poll_aprs_comment_timeout();
         app.poll_contacts_name_timeout();
+        app.poll_satellite_name_timeout();
 
         // Scan / Search / ScanQt / Fm / Spectrum (each self-guards on the
         // current mode)

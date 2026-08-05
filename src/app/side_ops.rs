@@ -74,7 +74,7 @@ pub(super) fn find_programmed_channel(app: &mut App, from: u16, up: bool) -> Opt
 }
 
 pub(super) fn commit_input(app: &mut App, syst: &mut SYST) {
-    let value = app.input.value();
+    let value = app.input.entered_value();
     match app.sides[app.master].vfo_chan {
         ChVfoMode::Channel => {
             if value <= MAX_CHANNEL_NUM as u32 && !app.storage.is_channel_empty(value as u16) {

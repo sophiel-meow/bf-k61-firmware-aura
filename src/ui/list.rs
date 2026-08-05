@@ -15,7 +15,7 @@ const ARROW_W: i32 = 6;
 const ARROW_H: i32 = 5;
 const ARROW_GAP: i32 = 5;
 
-pub(super) trait ListSource {
+pub(crate) trait ListSource {
     fn row_count(&mut self) -> usize;
     fn label(&mut self, index: usize, w: &mut dyn core::fmt::Write);
     fn value(&mut self, _index: usize, _w: &mut dyn core::fmt::Write) -> bool {
@@ -26,7 +26,7 @@ pub(super) trait ListSource {
     }
 }
 
-pub(super) fn draw_list<D>(
+pub(crate) fn draw_list<D>(
     lcd: &mut D,
     title: &str,
     source: &mut dyn ListSource,
@@ -85,9 +85,7 @@ pub(super) fn draw_list<D>(
         if source.value(index, &mut value) {
             if let Some(cursor) = source.cursor(index) {
                 if label_is_empty {
-                    draw_value_with_cursor_left(
-                        lcd, value.as_str(), cursor, row_top, baseline, fg,
-                    );
+                    draw_value_with_cursor_left(lcd, value.as_str(), cursor, row_top, baseline, fg);
                 } else {
                     draw_value_with_cursor(lcd, value.as_str(), cursor, row_top, baseline, fg);
                 }
@@ -186,7 +184,6 @@ fn draw_value_with_cursor_left<D>(
 {
     draw_value_left(lcd, text, baseline_y, fg);
 
-    let char_w = FONT_6X10.character_size.width as i32;
     let x0 = 4i32;
 
     draw_cursor_box(lcd, text, cursor_index, x0, row_top, baseline_y, fg);

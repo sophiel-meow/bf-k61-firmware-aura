@@ -1,6 +1,7 @@
+use crate::app::satellite::sat_record::{SatRecord, SAT_RECORD_SIZE};
 use crate::drivers::fd6818::Power;
 use crate::drivers::norflash::{NorFlash, SECTOR_SIZE};
-use crate::flash_map::{self, addr};
+use crate::flash_map::{self, addr, MAX_SATELLITES};
 use crate::hal::wear_leveled::WearLeveledRegion;
 
 /// Both VFO sides (A+B), combined into one wear-leveled record.
@@ -18,6 +19,9 @@ const FM_REGION: WearLeveledRegion<FM_PAYLOAD_LEN> = WearLeveledRegion::new(addr
 /// modulation: bytes `half*3..half*3+3` are 1 mode byte + little-endian
 /// `u16` channel number, bytes `6+half` are the side's `Modulation` raw
 const CHANNEL_STATE_REGION: WearLeveledRegion<8> = WearLeveledRegion::new(addr::SYSTEMRAN_ADDR, 16);
+
+/// Satellite records: 20 * 32 bytes = 640 bytes.
+const SAT_TOTAL_BYTES: usize = MAX_SATELLITES * SAT_RECORD_SIZE;
 
 pub struct Storage {
     norflash: NorFlash<'static>,
@@ -254,5 +258,37 @@ impl Storage {
         self.norflash.erase_sector(addr::VFO_INFO_ADDR);
         self.norflash.erase_sector(addr::RADIO_IMFOS_ADDR);
         self.norflash.erase_sector(addr::SYSTEMRAN_ADDR);
+    }
+
+    pub fn load_satellites(&mut self) -> [Option<SatRecord>; MAX_SATELLITES] {
+        let mut buf = [0xFFu8; SAT_TOTAL_BYTES];
+        self.norflash.read_bytes(addr::SAT_ADDR, &mut buf);
+
+        let mut sats = [None; MAX_SATELLITES];
+        for (i, chunk) in buf.chunks_exact(SAT_RECORD_SIZE).enumerate() {
+            let record: [u8; SAT_RECORD_SIZE] = chunk.try_into().unwrap();
+            sats[i] = SatRecord::from_bytes(&record);
+        }
+        sats
+    }
+
+    pub fn save_satellites(&mut self, sats: &[Option<SatRecord>; MAX_SATELLITES]) {
+        let sector_addr = (addr::SAT_ADDR / SECTOR_SIZE) * SECTOR_SIZE;
+        let mut buf = [0u8; SECTOR_SIZE as usize];
+        self.norflash.read_bytes(sector_addr, &mut buf);
+
+        let offset = (addr::SAT_ADDR - sector_addr) as usize;
+        for (i, sat_opt) in sats.iter().enumerate() {
+            let off = offset + i * SAT_RECORD_SIZE;
+            let bytes = if let Some(sat) = sat_opt {
+                sat.to_bytes()
+            } else {
+                [0xFFu8; SAT_RECORD_SIZE]
+            };
+            buf[off..off + SAT_RECORD_SIZE].copy_from_slice(&bytes);
+        }
+
+        self.norflash.erase_sector(sector_addr);
+        self.norflash.write_bytes(sector_addr, &buf);
     }
 }

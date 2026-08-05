@@ -3,16 +3,19 @@ mod ax25;
 mod chanmgr;
 mod contacts;
 mod convert;
+pub mod doppler;
 mod fm;
 mod input;
 mod keyfn;
 mod keys;
 mod launcher;
 mod name_edit;
+pub mod satellite;
 mod scan;
 mod scanqt;
 mod search;
 mod settings;
+pub use settings::CTCSS_TABLE; // re-exported for UI tone display
 mod settings_ops;
 mod side;
 mod side_ops;
@@ -29,7 +32,7 @@ use crate::device::radio::{
     BandLock, ChannelConfig, Modulation, Power, Radio, RogerTone, SubAudio,
 };
 use crate::device::storage::Storage;
-use crate::flash_map::{self, addr};
+use crate::flash_map::{self, addr, MAX_SATELLITES};
 use cortex_m::peripheral::SYST;
 
 const FIRMWARE_VERSION: &str = env!("GIT_VERSION");
@@ -107,6 +110,8 @@ pub enum Mode {
     ScanQt,
     Contacts,
     Spectrum,
+    Satellite,
+    SatelliteTracking,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -148,7 +153,7 @@ pub struct App {
     watching: usize,
     last_signal_side: Option<usize>,
 
-    input: InputBuf,
+    input: DigitInput<VFO_INPUT_DIGITS>,
     key_lock: bool,
     transmitting: bool,
     tx_prohibited: bool,
@@ -225,6 +230,19 @@ pub struct App {
     fm_channels: [u16; flash_map::FM_CHANNEL_COUNT],
 
     spectrum: spectrum::SpectrumState,
+
+    /// Software wall clock: seconds since midnight. volatile
+    wall_secs: u32,
+    /// `true` once the user has set the wall clock.
+    time_set: bool,
+    /// Tick counter for 1-second wall-clock increment (TICKS_PER_SECOND = 100).
+    wall_tick: u16,
+    /// Satellite app UI state.
+    satellite: satellite::SatelliteUi,
+    /// Satellite records loaded from SPI flash.
+    sats: [Option<satellite::sat_record::SatRecord>; MAX_SATELLITES],
+    /// Active Doppler tracking state. `None` when not tracking.
+    pub(crate) doppler: Option<doppler::DopplerState>,
 }
 
 impl App {
@@ -338,6 +356,8 @@ impl App {
         radio.set_rit_offset(settings.rit_offset as i32 * 10);
         radio.set_tx_allowed(BandLock::from_u8(settings.band_lock).tx_ranges());
 
+        let sats = storage.load_satellites();
+
         App {
             radio,
             keypad,
@@ -352,7 +372,7 @@ impl App {
             master: 0,
             watching: 0,
             last_signal_side: None,
-            input: InputBuf::new(),
+            input: DigitInput::new(),
             key_lock: false,
             transmitting: false,
             tx_prohibited: false,
@@ -396,6 +416,12 @@ impl App {
             fm_radio,
             fm_channels,
             spectrum: spectrum::SpectrumState::new(default_cfg.freq_hz),
+            wall_secs: 0,
+            time_set: false,
+            wall_tick: 0,
+            satellite: satellite::SatelliteUi::new(),
+            sats,
+            doppler: None,
         }
     }
 
@@ -515,13 +541,16 @@ impl App {
         if self.radio.audio_is_open() {
             self.note_backlight_activity();
         }
-        if self.bl_idle_ticks > 0 {
+        if self.bl_idle_ticks > 0 && self.mode != Mode::SatelliteTracking {
             self.bl_idle_ticks -= 1;
         }
     }
 
     pub fn backlight_should_be_on(&self) -> bool {
-        self.transmitting || self.settings.backlight_time == 0 || self.bl_idle_ticks > 0
+        self.transmitting
+            || self.settings.backlight_time == 0
+            || self.bl_idle_ticks > 0
+            || self.mode == Mode::SatelliteTracking
     }
 
     // persistence
@@ -535,6 +564,10 @@ impl App {
 
     fn save_settings(&mut self) {
         self.storage.save_settings(&self.settings);
+    }
+
+    pub fn save_satellites(&mut self) {
+        self.storage.save_satellites(&self.sats);
     }
 
     pub fn save_channel_state(&mut self) {
@@ -1001,6 +1034,11 @@ impl App {
     pub fn poll_contacts_name_timeout(&mut self) {
         contacts::poll_name_timeout(self);
     }
+    pub fn poll_satellite_name_timeout(&mut self) {
+        if self.mode == Mode::Satellite {
+            satellite::poll_name_timeout(&mut self.satellite);
+        }
+    }
 
     fn set_ani_target_override(&mut self, id: [u8; 3]) {
         tx::set_ani_target_override(self, id);
@@ -1028,6 +1066,92 @@ impl App {
     // getters
     pub fn mode(&self) -> Mode {
         self.mode
+    }
+
+    pub fn wall_secs(&self) -> u32 {
+        self.wall_secs
+    }
+
+    pub fn time_set(&self) -> bool {
+        self.time_set
+    }
+
+    pub fn sats(&self) -> &[Option<satellite::sat_record::SatRecord>; MAX_SATELLITES] {
+        &self.sats
+    }
+
+    pub fn sats_mut(&mut self) -> &mut [Option<satellite::sat_record::SatRecord>; MAX_SATELLITES] {
+        &mut self.sats
+    }
+
+    pub fn satellite_ui(&self) -> &satellite::SatelliteUi {
+        &self.satellite
+    }
+
+    pub fn satellite_ui_mut(&mut self) -> &mut satellite::SatelliteUi {
+        &mut self.satellite
+    }
+
+    pub fn doppler(&self) -> Option<&doppler::DopplerState> {
+        self.doppler.as_ref()
+    }
+
+    /// Set transmitting flag for tracking mode (bypasses normal PTT guards).
+    pub fn set_transmitting_for_tracking(&mut self) {
+        self.transmitting = true;
+    }
+
+    /// Clear transmitting flag for tracking mode.
+    pub fn clear_transmitting_for_tracking(&mut self) {
+        self.transmitting = false;
+    }
+
+    /// Increment wall clock tick. Call every 100ms (10 scheduler ticks).
+    /// Returns `true` when a full second has elapsed and Doppler update
+    /// should be performed.
+    pub fn poll_wall_clock(&mut self) -> bool {
+        self.wall_tick += 1;
+        if self.wall_tick >= 10 {
+            self.wall_tick = 0;
+            satellite::time::wall_clock_tick(&mut self.wall_secs);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Perform per-second Doppler update during tracking mode.
+    /// Skips frequency retune while transmitting to avoid interrupting TX.
+    pub fn poll_doppler_update(&mut self, syst: &mut SYST) {
+        if self.mode != Mode::SatelliteTracking {
+            return;
+        }
+
+        if self.transmitting {
+            return; // Don't retune during TX
+        }
+
+        // Refresh gain values from FD6818 registers (always, even during TX)
+        let (lnas, lna, pga, if_gain) =
+            satellite::tracking::tracking_read_gains(&mut self.radio, syst);
+        self.satellite.gain_lnas = lnas;
+        self.satellite.gain_lna = lna;
+        self.satellite.gain_pga = pga;
+        self.satellite.gain_if = if_gain;
+
+        if let Some(ref doppler) = self.doppler {
+            let doppler_hz = doppler::doppler_update(doppler, self.wall_secs);
+            self.satellite.current_doppler_hz = doppler_hz;
+            let rx_freq = self.satellite.active_rx_freq_hz;
+            let wide = self.satellite.tracking_wide;
+            satellite::tracking::tracking_update_rx(
+                &mut self.radio,
+                syst,
+                rx_freq,
+                doppler_hz,
+                wide,
+            );
+        }
     }
     pub fn is_transmitting(&self) -> bool {
         self.transmitting || self.cw_tx_active

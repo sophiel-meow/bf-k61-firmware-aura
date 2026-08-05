@@ -277,7 +277,7 @@ pub(super) fn draw_right_aligned<D>(
 
 /// Faux-bold
 #[allow(dead_code)]
-fn draw_bold<D>(lcd: &mut D, text: &str, pos: Point, font: &embedded_graphics::mono_font::MonoFont)
+pub(crate) fn draw_bold<D>(lcd: &mut D, text: &str, pos: Point, font: &embedded_graphics::mono_font::MonoFont)
 where
     D: DrawTarget<Color = BinaryColor>,
 {
@@ -303,7 +303,7 @@ fn draw_right_aligned_bold<D>(
 
 /// Big MHz.kHz frequency (ProFont) with the remaining 2 fractional digits
 /// trailing in a smaller font, both right-aligned as one block.
-pub(super) fn draw_frequency<D>(lcd: &mut D, freq_hz: u32, baseline_y: i32)
+pub(crate) fn draw_frequency<D>(lcd: &mut D, freq_hz: u32, baseline_y: i32)
 where
     D: DrawTarget<Color = BinaryColor>,
 {
@@ -530,7 +530,7 @@ const BAR_MAX_H: i32 = 7;
 const BAR_GAP: i32 = 1;
 const BAR_HOLLOW_COUNT: u8 = 4;
 
-fn draw_classic_bar<D>(lcd: &mut D, x: i32, base_y: i32, level: u8, total: u8)
+pub(crate) fn draw_classic_bar<D>(lcd: &mut D, x: i32, base_y: i32, level: u8, total: u8)
 where
     D: DrawTarget<Color = BinaryColor>,
 {
@@ -560,7 +560,7 @@ where
 /// Number of bar segments: S1..S9 (9 solid) + 4 over-S9 (hollow) = 13
 const S_METER_SEGS: u8 = 13;
 
-fn draw_s_meter<D>(lcd: &mut D, app: &app::App, row_y: i32)
+pub(crate) fn draw_s_meter<D>(lcd: &mut D, app: &app::App, row_y: i32)
 where
     D: DrawTarget<Color = BinaryColor>,
 {

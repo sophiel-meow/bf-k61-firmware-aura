@@ -13,7 +13,7 @@ pub(super) const KEY_CHARS: [&[u8]; 10] = [
     b"WXYZwxyz9",
 ];
 
-pub(super) struct NameEdit<const N: usize> {
+pub(crate) struct NameEdit<const N: usize> {
     pub buf: [u8; N],
     pub cursor: usize,
     pending: Option<(u8, usize)>,

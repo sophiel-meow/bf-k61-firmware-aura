@@ -228,9 +228,19 @@ impl BandLock {
 
 // types
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Band {
+pub enum Band {
     Vhf,
     Uhf,
+}
+
+impl Band {
+    pub fn from_freq_hz(freq_hz: u32) -> Self {
+        if freq_hz >= 300_000_000 {
+            Band::Uhf
+        } else {
+            Band::Vhf
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -283,7 +293,7 @@ const DTMF_RX_TIMEOUT_TICKS: u8 = 40;
 const DTMF_RX_MAX_DIGITS: usize = 16;
 
 pub struct Radio {
-    pub(crate) fd6818: Fd6818<'static>,
+    fd6818: Fd6818<'static>,
     gpioa: &'static gpioa::RegisterBlock,
     gpiob: &'static gpiof::RegisterBlock,
     adc: adc::Adc<'static>,
@@ -422,15 +432,11 @@ impl Radio {
 
     // band
     fn band(&self) -> Band {
-        Self::band_of(self.cfg.freq_hz)
+        Band::from_freq_hz(self.cfg.freq_hz)
     }
 
     fn band_of(freq_hz: u32) -> Band {
-        if freq_hz >= 300_000_000 {
-            Band::Uhf
-        } else {
-            Band::Vhf
-        }
+        Band::from_freq_hz(freq_hz)
     }
 
     // config setters
@@ -456,6 +462,10 @@ impl Radio {
 
     pub fn set_modulation(&mut self, modulation: Modulation) {
         self.cfg.modulation = modulation;
+    }
+
+    pub fn set_wide_bandwidth(&mut self, wide: bool) {
+        self.cfg.wide_band = wide;
     }
 
     pub fn set_sql_level(&mut self, syst: &mut SYST, level: u8) {
@@ -740,6 +750,10 @@ impl Radio {
         self.monitor = !self.monitor;
     }
 
+    pub fn set_monitor(&mut self, on: bool) {
+        self.monitor = on;
+    }
+
     pub fn is_monitor(&self) -> bool {
         self.monitor
     }
@@ -773,6 +787,8 @@ impl Radio {
                 self.rssi_debounce = 0;
                 if rssi_open {
                     board::set_rx_led(self.gpioa, true);
+                } else {
+                    board::set_rx_led(self.gpioa, false);
                 }
             }
         } else {
@@ -811,6 +827,14 @@ impl Radio {
 
     pub fn audio_is_open(&self) -> bool {
         self.audio_open
+    }
+
+    pub fn read_rf_gains(&mut self, syst: &mut SYST) -> (u8, u8, u8, u16) {
+        self.fd6818.read_rf_gains(syst)
+    }
+
+    pub fn adjust_rf_gain(&mut self, syst: &mut SYST, menu: u8, up: bool) {
+        self.fd6818.adjust_rf_gain(syst, menu, up);
     }
 
     // TX / RX state machine
@@ -854,6 +878,21 @@ impl Radio {
         self.dtmf_rx_len = 0;
         self.dtmf_rx_timeout = 0;
         self.tx_state = false;
+    }
+
+    /// Lightweight frequency retune while staying in RX mode.
+    /// Does not reset squelch, subaudio, or audio path, only programs the PLL
+    /// and updates the band GPIO.
+    pub fn retune_rx(&mut self, syst: &mut SYST, freq_hz: u32, wide: bool) {
+        self.cfg.freq_hz = freq_hz;
+        self.cfg.wide_band = wide;
+        match Self::band_of(freq_hz) {
+            Band::Uhf => board::set_rx_band_uhf(self.gpioa),
+            Band::Vhf => board::set_rx_band_vhf(self.gpioa),
+        }
+        self.fd6818.set_frequency_hz(syst, freq_hz);
+        self.fd6818.set_wide_bandwidth(syst, wide);
+        self.fd6818.rx_on(syst);
     }
 
     pub fn spectrum_tune(&mut self, syst: &mut SYST, freq_hz: u32) {
@@ -915,6 +954,7 @@ impl Radio {
             Band::Uhf => self.fd6818.set_tx_band_uhf(syst),
             Band::Vhf => self.fd6818.set_tx_band_vhf(syst),
         }
+        board::set_rx_led(self.gpioa, false);
         self.fd6818.set_tx_led(syst, true);
         self.tx_state = true;
         true

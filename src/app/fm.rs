@@ -196,7 +196,7 @@ fn handle_digit(app: &mut App, syst: &mut SYST, d: u8) {
 }
 
 fn commit_input(app: &mut App, syst: &mut SYST) {
-    let value = app.input.value();
+    let value = app.input.entered_value();
     app.input.clear();
     match app.fm.mode {
         ChVfoMode::Vfo => {

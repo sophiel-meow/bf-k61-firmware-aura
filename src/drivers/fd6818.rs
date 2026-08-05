@@ -41,7 +41,7 @@ const REG_RXAGC_3: u8 = 0x11;
 const REG_RXAGC_4: u8 = 0x10;
 /// REG_RXAGC_5 (0x14) / REG_RXAGC_6 (0x49) are a matched pair: bottom step
 /// of the RX AGC gain table plus the RF-AGC low/high threshold. A
-/// "similiar chip" (BK4819) firmware writes a *different* pair
+/// "similar chip" (BK4819) firmware writes a *different* pair
 /// specifically while the active demod is AM, switched every time RX
 /// modulation changes (`BK4819_InitAGC`/`RADIO_SetupAGC`).
 /// `set_agc_modulation` below switches between them; values for
@@ -307,9 +307,20 @@ const AM_VOLUME_FIXED: u16 = 0xB3AA;
 /// 4-bit AF-select field from 1 to 5
 const USB_AF_OUT_BIT: u16 = 0x0400;
 
-const REG_UNKNOWN_3D: u8 = 0x3D;
-const UNKNOWN_3D_NORMAL: u16 = 0x2AAB;
-const UNKNOWN_3D_USB: u16 = 0x0000;
+/// IF frequency selection register.
+///
+/// Known IF settings (all values approximate, REG_43<5> doubles IF when set):
+///   0x2AAB = 8.46 kHz IF
+///   0x4924 = 7.25 kHz IF
+///   0x6800 = 6.35 kHz IF
+///   0x871C = 5.64 kHz IF
+///   0xA666 = 5.08 kHz IF
+///   0xC5D1 = 4.62 kHz IF
+///   0xE555 = 4.23 kHz IF
+///   0x0000 = Zero IF (used for USB / CW direct-conversion)
+const REG_IF_SEL: u8 = 0x3D;
+const IF_SEL_8K46: u16 = 0x2AAB;
+const IF_SEL_ZERO: u16 = 0x0000;
 
 /// REG 0x73 bit4: AFC (automatic frequency control) disable
 /// Needs to be on (AFC off) for anything but FM
@@ -631,11 +642,9 @@ impl<'a> Fd6818<'a> {
         self.write_reg(syst, REG_TONE_GAIN, Self::AFSK_REG70_MARK);
     }
 
-    const STATE_TX_TONE: u16 = 0xC3FA;
-
     pub fn enter_tx_tone_state(&mut self, syst: &mut SYST) {
         self.write_reg(syst, REG_STATE, 0x0000);
-        self.write_reg(syst, REG_STATE, Self::STATE_TX_TONE);
+        self.write_reg(syst, REG_STATE, STATE_TX_TONE);
     }
 
     /// `REG_TONE_FREQ`/`REG_FSK_BAUD`'s frequency-word encoding when used as
@@ -925,12 +934,12 @@ impl<'a> Fd6818<'a> {
     }
 
     pub fn apply_modulation(&mut self, syst: &mut SYST, modulation: Modulation) {
-        let unknown_3d = if matches!(modulation, Modulation::Usb | Modulation::Cw) {
-            UNKNOWN_3D_USB
+        let if_sel = if matches!(modulation, Modulation::Usb | Modulation::Cw) {
+            IF_SEL_ZERO
         } else {
-            UNKNOWN_3D_NORMAL
+            IF_SEL_8K46
         };
-        self.write_reg(syst, REG_UNKNOWN_3D, unknown_3d);
+        self.write_reg(syst, REG_IF_SEL, if_sel);
 
         let afc_disable = self.read_reg(syst, REG_AFC_DISABLE);
         let afc_disable = if !matches!(modulation, Modulation::Fm | Modulation::Cwf) {
@@ -1273,7 +1282,7 @@ impl<'a> Fd6818<'a> {
     }
 
     /// write 16bit reg
-    pub fn write_reg(&mut self, syst: &mut SYST, addr: u8, value: u16) {
+    fn write_reg(&mut self, syst: &mut SYST, addr: u8, value: u16) {
         board::set_fd6818_scn(self.gpiob, false);
         delay::us(syst, BIT_DELAY_US);
         self.write_bits(syst, addr & 0x7F);
@@ -1285,7 +1294,7 @@ impl<'a> Fd6818<'a> {
     }
 
     /// read 16bit reg
-    pub fn read_reg(&mut self, syst: &mut SYST, addr: u8) -> u16 {
+    fn read_reg(&mut self, syst: &mut SYST, addr: u8) -> u16 {
         board::set_fd6818_scn(self.gpiob, false);
         delay::us(syst, BIT_DELAY_US);
         self.write_bits(syst, addr | 0x80);
@@ -1303,6 +1312,49 @@ impl<'a> Fd6818<'a> {
         board::set_fd6818_sck(self.gpiob, false);
 
         data
+    }
+
+    /// Read all four RF gain values. Returns `(lnas, lna, pga, if_gain)`.
+    /// LNAs (0-3), LNA (0-7), PGA (0-7) from REG_RXAGC_1; IF from REG_IF_SEL.
+    pub fn read_rf_gains(&mut self, syst: &mut SYST) -> (u8, u8, u8, u16) {
+        let reg13 = self.read_reg(syst, REG_RXAGC_1);
+        let lnas = ((reg13 >> 8) & 0b11) as u8;
+        let lna = ((reg13 >> 5) & 0b111) as u8;
+        let pga = (reg13 & 0b111) as u8;
+        let if_gain = self.read_reg(syst, REG_IF_SEL);
+        (lnas, lna, pga, if_gain)
+    }
+
+    /// Adjust a single RF gain stage.
+    /// `menu`: 1=LNAs (REG_RXAGC_1[9:8]), 2=LNA (REG_RXAGC_1[7:5]),
+    /// 3=PGA (REG_RXAGC_1[2:0]), 4=IF (REG_IF_SEL, step IF_SEL_STEP).
+    pub fn adjust_rf_gain(&mut self, syst: &mut SYST, menu: u8, up: bool) {
+        const IF_SEL_STEP: u16 = 0x2AAA;
+
+        if (1..=3).contains(&menu) {
+            let (offset, mask): (u8, u16) = match menu {
+                1 => (8, 0b11),
+                2 => (5, 0b111),
+                _ => (0, 0b111),
+            };
+            let reg = self.read_reg(syst, REG_RXAGC_1);
+            let val = (reg >> offset) & mask;
+            let new_val = if up {
+                val.saturating_add(1).min(mask)
+            } else {
+                val.saturating_sub(1)
+            };
+            let cleared = reg & !(mask << offset);
+            self.write_reg(syst, REG_RXAGC_1, cleared | (new_val << offset));
+        } else if menu == 4 {
+            let reg = self.read_reg(syst, REG_IF_SEL);
+            let new_val = if up {
+                reg.saturating_add(IF_SEL_STEP)
+            } else {
+                reg.saturating_sub(IF_SEL_STEP)
+            };
+            self.write_reg(syst, REG_IF_SEL, new_val);
+        }
     }
 
     /// set freq (Hz, min step 10Hz) with calibration

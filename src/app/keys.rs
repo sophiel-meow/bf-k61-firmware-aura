@@ -3,6 +3,7 @@ use super::contacts;
 use super::fm;
 use super::keyfn;
 use super::launcher::{LauncherEntry, LAUNCHER_ITEMS};
+use super::satellite;
 use super::settings;
 use super::settings_ops;
 use super::{
@@ -57,6 +58,7 @@ pub(super) fn dispatch(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
         Mode::ScanQt => scanqt::dispatch(app, syst, ev),
         Mode::Fm => fm::dispatch(app, syst, ev),
         Mode::Spectrum => spectrum::dispatch(app, syst, ev),
+        Mode::Satellite | Mode::SatelliteTracking => satellite::keys::dispatch(app, syst, ev),
     }
 }
 
@@ -223,6 +225,10 @@ fn dispatch_app_menu(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
                         LauncherEntry::FmRadio => fm::enter(app, syst),
                         LauncherEntry::Search => search::enter(app, syst),
                         LauncherEntry::Spectrum => spectrum::enter(app, syst),
+                        LauncherEntry::Satellite => {
+                            app.mode = Mode::Satellite;
+                            app.satellite.page = satellite::SatellitePage::List;
+                        }
                     }
                     debug_assert!(app.mode == entry.target_mode());
                 }
@@ -421,7 +427,7 @@ fn dispatch_offset_input(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
 
 fn commit_offset_input(app: &mut App, syst: &mut SYST) {
     if !app.settings_ui.offset_input.is_empty() {
-        let hz = app.settings_ui.offset_input.value() * 100;
+        let hz = app.settings_ui.offset_input.value();
         settings_ops::apply(app, syst, settings::SettingItem::Offse, hz as i32);
         app.save_settings();
     }

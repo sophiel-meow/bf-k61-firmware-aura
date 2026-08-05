@@ -366,7 +366,7 @@ fn dispatch_freq_input(app: &mut App, ev: KeyEvent) {
 
 fn commit_freq_input(app: &mut App) {
     if app.input.len > 0 {
-        let centre_hz = app.input.value() * 1000;
+        let centre_hz = app.input.entered_value() * 1000;
         app.spectrum.centre_window(centre_hz);
         app.spectrum.relaunch();
     }

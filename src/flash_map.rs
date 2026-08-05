@@ -50,7 +50,12 @@ pub mod addr {
     pub const BOOT_TEXT_ADDR: u32 = 0x9100;
     pub const BOOT_TUNE_ADDR: u32 = 0x9200;
     pub const BATTERY_CAL_ADDR: u32 = 0x9300;
+
+    pub const SAT_ADDR: u32 = 0x000D_0000; // voice prompt file for original fw
 }
+
+/// Maximum number of satellites stored in SPI flash.
+pub const MAX_SATELLITES: usize = 20;
 
 /// Raw byte size of the boot-logo bitmap at `addr::BOOT_LOGO_ADDR`: 8 pages
 /// x 128 columns x 1 byte/column, the ST7565 controller's native page
