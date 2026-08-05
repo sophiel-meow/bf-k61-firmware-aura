@@ -3,6 +3,7 @@ name = "kd32f328-pac"
 version = "0.1.0"
 edition = "2021"
 description = "Peripheral Access Crate for KD32F328CB "
+license = "Apache-2.0"
 
 [dependencies]
 cortex-m = "0.7"
