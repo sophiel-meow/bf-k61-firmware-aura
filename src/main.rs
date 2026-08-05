@@ -201,7 +201,7 @@ fn main() -> ! {
         &mut cp.SYST,
     );
 
-    app.poll_battery();
+    app.init_battery_samples();
     let boot_mode = app.settings().boot_display_mode;
     match boot_mode {
         1 => {

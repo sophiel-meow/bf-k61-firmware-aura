@@ -588,7 +588,7 @@ fn dispatch_aprs_comment_input(app: &mut App, _syst: &mut SYST, ev: KeyEvent) {
 /// Solves the calibration equation for the raw ADC value
 fn commit_battery_input(app: &mut App, syst: &mut SYST) {
     let entered_cv = app.settings_ui.battery_input.value();
-    let raw12 = app.battery_raw12 as u32;
+    let raw12 = app.battery_raw12_avg() as u32;
     if let Some(new_cal) = (raw12 * BATTERY_CAL_REFERENCE_CV as u32).checked_div(entered_cv) {
         settings_ops::apply(
             app,

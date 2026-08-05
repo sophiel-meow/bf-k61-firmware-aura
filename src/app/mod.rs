@@ -204,10 +204,8 @@ pub struct App {
 
     battery_cal: [u8; 7],
     battery_bars: u8,
-    /// Latest raw 12-bit battery-ADC sample, refreshed by `poll_battery`.
-    /// Kept separately from `battery_bars` (which uses the factory 8-bit
-    /// threshold table) since `battery_voltage_cv` needs full precision.
-    battery_raw12: u16,
+    battery_samples: [u16; 4],
+    battery_sample_idx: usize,
 
     rssi_raw: u8,
     mic_level: u8,
@@ -400,7 +398,8 @@ impl App {
             dtmf_dial: None,
             battery_cal,
             battery_bars: 4,
-            battery_raw12: 0,
+            battery_samples: [0; 4],
+            battery_sample_idx: 0,
             rssi_raw: 0,
             mic_level: 0,
             channel_display_mode: channel_display_mode_from_u8(settings.channel_display_mode),
@@ -709,7 +708,12 @@ impl App {
     // battery
     pub fn poll_battery(&mut self) {
         let raw12 = self.radio.read_battery_raw();
-        self.battery_raw12 = raw12;
+
+        // Ring buffer write
+        self.battery_samples[self.battery_sample_idx] = raw12;
+        self.battery_sample_idx = (self.battery_sample_idx + 1) & 3; // wrap at 4
+
+        // Bars still use the instantaneous 8-bit sample for responsiveness
         let raw = (raw12 >> 4) as u8;
         let t = &self.battery_cal;
         self.battery_bars = if raw > t[5] {
@@ -725,14 +729,37 @@ impl App {
         };
     }
 
+    pub fn init_battery_samples(&mut self) {
+        for i in 0..4 {
+            self.battery_samples[i] = self.radio.read_battery_raw();
+        }
+        self.battery_sample_idx = 0;
+        let raw = (self.battery_samples[3] >> 4) as u8;
+        let t = &self.battery_cal;
+        self.battery_bars = if raw > t[5] {
+            4
+        } else if raw > t[4] {
+            3
+        } else if raw > t[3] {
+            2
+        } else if raw > t[2] {
+            1
+        } else {
+            0
+        };
+    }
+
+    pub fn battery_raw12_avg(&self) -> u16 {
+        let sum: u32 = self.battery_samples.iter().map(|&v| v as u32).sum();
+        (sum / 4) as u16
+    }
+
     pub fn battery_bars(&self) -> u8 {
         self.battery_bars
     }
 
-    /// Battery voltage in hundredths of a volt, derived from the latest
-    /// raw ADC sample and the field-tuned `battery_cal_raw` calibration point
     pub fn battery_voltage_cv(&self) -> u16 {
-        (self.battery_raw12 as u32 * BATTERY_CAL_REFERENCE_CV as u32
+        (self.battery_raw12_avg() as u32 * BATTERY_CAL_REFERENCE_CV as u32
             / self.settings.battery_cal_raw.max(1) as u32) as u16
     }
 
