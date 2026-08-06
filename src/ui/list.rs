@@ -202,30 +202,29 @@ fn draw_cursor_box<D>(
 {
     let char_w = FONT_6X10.character_size.width as i32;
 
-    if let Some(ch) = text.chars().nth(cursor_index) {
-        let cursor_x = x0 + cursor_index as i32 * char_w;
-        let inverted = if fg == BinaryColor::On {
-            BinaryColor::Off
-        } else {
-            BinaryColor::On
-        };
-        Rectangle::new(
-            Point::new(cursor_x, row_top),
-            Size::new(char_w as u32, ROW_HEIGHT as u32),
-        )
-        .into_styled(PrimitiveStyle::with_fill(fg))
-        .draw(lcd)
-        .ok();
+    let ch = text.chars().nth(cursor_index).unwrap_or(' ');
+    let cursor_x = x0 + cursor_index as i32 * char_w;
+    let inverted = if fg == BinaryColor::On {
+        BinaryColor::Off
+    } else {
+        BinaryColor::On
+    };
+    Rectangle::new(
+        Point::new(cursor_x, row_top),
+        Size::new(char_w as u32, ROW_HEIGHT as u32),
+    )
+    .into_styled(PrimitiveStyle::with_fill(fg))
+    .draw(lcd)
+    .ok();
 
-        let mut ch_buf = [0u8; 4];
-        Text::new(
-            ch.encode_utf8(&mut ch_buf),
-            Point::new(cursor_x, baseline_y),
-            MonoTextStyle::new(&FONT_6X10, inverted),
-        )
-        .draw(lcd)
-        .ok();
-    }
+    let mut ch_buf = [0u8; 4];
+    Text::new(
+        ch.encode_utf8(&mut ch_buf),
+        Point::new(cursor_x, baseline_y),
+        MonoTextStyle::new(&FONT_6X10, inverted),
+    )
+    .draw(lcd)
+    .ok();
 }
 
 fn draw_editing_value<D>(lcd: &mut D, text: &str, row_top: i32, fg: BinaryColor)

@@ -594,10 +594,7 @@ pub fn value_text_for(app: &App, index: usize, item: SettingItem, w: &mut dyn Wr
             }
         }
         SettingItem::AprsLat | SettingItem::AprsLon => {
-            let v = current_value(app, item);
-            if v == crate::flash_map::APRS_COORD_NOT_SET {
-                let _ = write!(w, "----");
-            } else if app.settings_ui.is_editing(index) {
+            if app.settings_ui.is_editing(index) {
                 match item {
                     SettingItem::AprsLat => {
                         app.settings_ui.aprs_lat_input.write_display(2, w);
@@ -617,6 +614,11 @@ pub fn value_text_for(app: &App, index: usize, item: SettingItem, w: &mut dyn Wr
                     }
                 }
             } else {
+                let v = current_value(app, item);
+                if v == crate::flash_map::APRS_COORD_NOT_SET {
+                    let _ = write!(w, "----");
+                    return;
+                }
                 let neg = v < 0;
                 let av = if neg { -v } else { v };
                 let deg = av / 100_000;

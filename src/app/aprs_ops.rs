@@ -48,6 +48,12 @@ pub(super) fn send_beacon(app: &mut App) {
         return;
     }
 
+    app.request_aprs_beacon();
+}
+
+pub(super) fn encode_beacon(app: &App) -> ([u8; frame::MAX_NRZI_BYTES], usize) {
+    let s = &app.settings;
+
     let src_call = pad6(&s.aprs_callsign);
     let mut config = AprsConfig::new(src_call, s.aprs_ssid);
     config.lat = s.aprs_lat;
@@ -117,7 +123,7 @@ pub(super) fn send_beacon(app: &mut App) {
     let mut nrzi_buf = [0u8; frame::MAX_NRZI_BYTES];
     let total_bits = frame::nrzi_encode_frame(builder.as_bytes(), 3, &mut nrzi_buf);
 
-    app.set_aprs_beacon_pending(nrzi_buf, total_bits);
+    (nrzi_buf, total_bits)
 }
 
 fn pad6(raw: &[u8; 7]) -> [u8; 6] {

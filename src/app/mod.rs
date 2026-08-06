@@ -162,10 +162,6 @@ pub struct App {
     tx_prohibited: bool,
     /// APRS beacon TX in progress, set by `send_beacon`, handled by main loop.
     aprs_beacon_pending: bool,
-    /// NRZI-encoded bitstream for the pending APRS beacon.
-    aprs_beacon_nrzi: [u8; ax25::frame::MAX_NRZI_BYTES],
-    /// Number of valid bits in `aprs_beacon_nrzi`.
-    aprs_beacon_nrzi_bits: usize,
     dual_standby: bool,
     dual_hold_ticks: u16,
     tot_ticks: u16,
@@ -381,8 +377,6 @@ impl App {
             transmitting: false,
             tx_prohibited: false,
             aprs_beacon_pending: false,
-            aprs_beacon_nrzi: [0u8; ax25::frame::MAX_NRZI_BYTES],
-            aprs_beacon_nrzi_bits: 0,
             flashlight,
             dual_standby: settings.dual_standby,
             dual_hold_ticks: DUAL_STANDBY_HOLD_TICKS,
@@ -1189,9 +1183,7 @@ impl App {
         self.aprs_beacon_pending
     }
 
-    pub(super) fn set_aprs_beacon_pending(&mut self, nrzi: [u8; ax25::frame::MAX_NRZI_BYTES], bits: usize) {
-        self.aprs_beacon_nrzi = nrzi;
-        self.aprs_beacon_nrzi_bits = bits;
+    pub(super) fn request_aprs_beacon(&mut self) {
         self.aprs_beacon_pending = true;
     }
 
@@ -1200,7 +1192,7 @@ impl App {
 
         let tone_1200: u16 = (1200u32 * 1_032_444 / 100_000) as u16;
         let tone_2200: u16 = (2200u32 * 1_032_444 / 100_000) as u16;
-        let bits = self.aprs_beacon_nrzi_bits;
+        let (nrzi_buf, bits) = aprs_ops::encode_beacon(self);
         let power = match self.settings.aprs_power {
             1 => Power::Mid,
             2 => Power::High,
@@ -1209,7 +1201,7 @@ impl App {
 
         self.radio.transmit_afsk(
             syst,
-            &self.aprs_beacon_nrzi,
+            &nrzi_buf,
             bits,
             self.settings.aprs_freq_hz,
             power,

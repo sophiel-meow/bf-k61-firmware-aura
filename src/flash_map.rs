@@ -32,6 +32,11 @@ pub mod addr {
     // pub const RF_MODEL_ADDR: u32 = 0xD000;
     // pub const RF_TXEN_ADDR: u32 = 0xD001;
 
+    /// reused as scratch staging space for `Storage::rmw_sector_record` so
+    /// single-record flash read-modify-write doesn't need a
+    /// `[u8; SECTOR_SIZE]` RAM buffer.
+    pub const RMW_SCRATCH_ADDR: u32 = 0xD000;
+
     pub const SYSTEMRAN_ADDR: u32 = 0xE000;
     // pub const F1CHAN_ADDR: u32 = 0xE000;
     // pub const F2CHAN_ADDR: u32 = 0xE002;

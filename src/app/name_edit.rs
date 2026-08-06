@@ -32,27 +32,19 @@ impl<const N: usize> NameEdit<N> {
 
     pub fn start(&mut self, initial: [u8; N]) {
         self.buf = initial;
-        self.cursor = initial
-            .iter()
-            .position(|&b| b == 0)
-            .unwrap_or(N - 1)
-            .min(N - 1);
+        self.cursor = initial.iter().position(|&b| b == 0).unwrap_or(N);
         self.pending = None;
         self.idle_ticks = 0;
     }
 
     pub fn finalize_pending(&mut self) {
         if self.pending.take().is_some() {
-            self.cursor = (self.cursor + 1).min(N - 1);
+            self.cursor = (self.cursor + 1).min(N);
         }
     }
 
     fn max_cursor(&self) -> usize {
-        self.buf
-            .iter()
-            .rposition(|&b| b != 0)
-            .map_or(0, |p| p + 1)
-            .min(N - 1)
+        self.buf.iter().rposition(|&b| b != 0).map_or(0, |p| p + 1)
     }
 
     pub fn move_cursor(&mut self, left: bool) {
@@ -76,12 +68,18 @@ impl<const N: usize> NameEdit<N> {
         self.cursor -= 1;
     }
 
-    fn insert_at_cursor(&mut self, ch: u8) {
+    /// No-op (returns `false`) when `cursor == N`: buffer is completely
+    /// full, there's no slot left to insert into.
+    fn insert_at_cursor(&mut self, ch: u8) -> bool {
+        if self.cursor >= N {
+            return false;
+        }
         let last = self.buf.len() - 1;
         for i in (self.cursor..last).rev() {
             self.buf[i + 1] = self.buf[i];
         }
         self.buf[self.cursor] = ch;
+        true
     }
 
     pub fn press_digit(&mut self, digit: u8) {
@@ -94,8 +92,9 @@ impl<const N: usize> NameEdit<N> {
             }
             _ => {
                 self.finalize_pending();
-                self.insert_at_cursor(table[0]);
-                self.pending = Some((digit, 0));
+                if self.insert_at_cursor(table[0]) {
+                    self.pending = Some((digit, 0));
+                }
             }
         }
         self.idle_ticks = 0;

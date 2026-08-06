@@ -1,5 +1,5 @@
 use crate::drivers::fd6818::Power;
-use crate::drivers::norflash::{NorFlash, SECTOR_SIZE};
+use crate::drivers::norflash::{NorFlash, PAGE_SIZE, SECTOR_SIZE};
 use crate::flash_map::{self, addr, SatRecord, MAX_SATELLITES, SAT_RECORD_SIZE, SSTV_IMAGE_SIZE};
 use crate::hal::wear_leveled::WearLeveledRegion;
 
@@ -212,27 +212,52 @@ impl Storage {
         self.norflash.write_bytes(addr, &channel.to_bytes());
     }
 
+    fn rmw_sector_record(&mut self, record_addr: u32, new_record: &[u8]) {
+        let sector_addr = (record_addr / SECTOR_SIZE) * SECTOR_SIZE;
+        let record_off = (record_addr - sector_addr) as usize;
+        let record_end = record_off + new_record.len();
+
+        // Stage 1: sector -> scratch, patching in the new record on the fly.
+        self.norflash.erase_sector(addr::RMW_SCRATCH_ADDR);
+        let mut page = [0u8; PAGE_SIZE];
+        let mut off = 0usize;
+        while off < SECTOR_SIZE as usize {
+            self.norflash
+                .read_bytes(sector_addr + off as u32, &mut page);
+            let page_end = off + PAGE_SIZE;
+            if record_off < page_end && record_end > off {
+                let lo = record_off.max(off);
+                let hi = record_end.min(page_end);
+                page[lo - off..hi - off]
+                    .copy_from_slice(&new_record[lo - record_off..hi - record_off]);
+            }
+            self.norflash
+                .write_bytes(addr::RMW_SCRATCH_ADDR + off as u32, &page);
+            off += PAGE_SIZE;
+        }
+
+        // Stage 2: erase the real sector, copy the staged (patched) content back.
+        self.norflash.erase_sector(sector_addr);
+        let mut off = 0usize;
+        while off < SECTOR_SIZE as usize {
+            self.norflash
+                .read_bytes(addr::RMW_SCRATCH_ADDR + off as u32, &mut page);
+            self.norflash.write_bytes(sector_addr + off as u32, &page);
+            off += PAGE_SIZE;
+        }
+    }
+
     /// Single-channel save for on-device editing:
     /// unlike `write_channel`, which assumes the caller is about to resend
     /// every sibling record in the sector (true for a CPS session, not for a
-    /// one-off keypad edit), this reads the whole 4KB sector out first so
-    /// the other 127 records in it survive the erase this record's own edit
-    /// requires. Deleting a channel is just calling this with
-    /// `Channel::from_bytes(&[0xFF; 32])`: an all-erased record round-trips
-    /// through `to_bytes()` byte-for-byte, so `is_channel_empty` sees it as
-    /// blank afterward.
+    /// one-off keypad edit), this preserves the other 127 records in the
+    /// sector across the erase this record's own edit requires. Deleting a
+    /// channel is just calling this with `Channel::from_bytes(&[0xFF; 32])`:
+    /// an all-erased record round-trips through `to_bytes()` byte-for-byte,
+    /// so `is_channel_empty` sees it as blank afterward.
     pub fn write_channel_rmw(&mut self, num: u16, channel: &flash_map::Channel) {
         let addr = addr::CHAN_ADDR + num as u32 * addr::CHAN_SIZE;
-        let sector_addr = (addr / SECTOR_SIZE) * SECTOR_SIZE;
-
-        let mut buf = [0u8; SECTOR_SIZE as usize];
-        self.norflash.read_bytes(sector_addr, &mut buf);
-
-        let offset = (addr - sector_addr) as usize;
-        buf[offset..offset + addr::CHAN_SIZE as usize].copy_from_slice(&channel.to_bytes());
-
-        self.norflash.erase_sector(sector_addr);
-        self.norflash.write_bytes(sector_addr, &buf);
+        self.rmw_sector_record(addr, &channel.to_bytes());
     }
 
     pub fn read_contact(&mut self, idx: u8) -> flash_map::Contact {
@@ -244,16 +269,7 @@ impl Storage {
 
     pub fn write_contact(&mut self, idx: u8, contact: &flash_map::Contact) {
         let addr = addr::DTMF_CODE_ADDR + idx as u32 * addr::CONTACT_SIZE;
-        let sector_addr = (addr / SECTOR_SIZE) * SECTOR_SIZE;
-
-        let mut buf = [0u8; SECTOR_SIZE as usize];
-        self.norflash.read_bytes(sector_addr, &mut buf);
-
-        let offset = (addr - sector_addr) as usize;
-        buf[offset..offset + addr::CONTACT_SIZE as usize].copy_from_slice(&contact.to_bytes());
-
-        self.norflash.erase_sector(sector_addr);
-        self.norflash.write_bytes(sector_addr, &buf);
+        self.rmw_sector_record(addr, &contact.to_bytes());
     }
 
     /// Check whether an SSTV background image is stored in SPI flash.
@@ -345,24 +361,24 @@ impl Storage {
         sats
     }
 
+    /// `SAT_ADDR`'s 4KB sector holds only satellite records (nothing else
+    /// in `flash_map` maps into it), so unlike `write_channel_rmw`/
+    /// `write_contact` there's no sibling data to preserve across the
+    /// erase. Erase once, then write only the defined slots directly --
+    /// deliberately avoiding a `[u8; SECTOR_SIZE]` stack buffer here: this
+    /// runs deep in the keypress interrupt call chain (satellite detail
+    /// save), and that 4KB on top of `main()`'s already-large frame
+    /// overflowed the 17.7KB RAM budget into the bootloader's IRQ
+    /// trampoline table just below RAM start, freezing the device.
     pub fn save_satellites(&mut self, sats: &[Option<SatRecord>; MAX_SATELLITES]) {
         let sector_addr = (addr::SAT_ADDR / SECTOR_SIZE) * SECTOR_SIZE;
-        let mut buf = [0u8; SECTOR_SIZE as usize];
-        self.norflash.read_bytes(sector_addr, &mut buf);
-
-        let offset = (addr::SAT_ADDR - sector_addr) as usize;
-        for (i, sat_opt) in sats.iter().enumerate() {
-            let off = offset + i * SAT_RECORD_SIZE;
-            let bytes = if let Some(sat) = sat_opt {
-                sat.to_bytes()
-            } else {
-                [0xFFu8; SAT_RECORD_SIZE]
-            };
-            buf[off..off + SAT_RECORD_SIZE].copy_from_slice(&bytes);
-        }
-
         self.norflash.erase_sector(sector_addr);
-        self.norflash.write_bytes(sector_addr, &buf);
+        for (i, sat_opt) in sats.iter().enumerate() {
+            if let Some(sat) = sat_opt {
+                let record_addr = addr::SAT_ADDR + i as u32 * SAT_RECORD_SIZE as u32;
+                self.norflash.write_bytes(record_addr, &sat.to_bytes());
+            }
+        }
     }
 
     /// Call once at the start of a CPS write session, before any

@@ -4,7 +4,7 @@ use super::TextBuf;
 use crate::app;
 use crate::app::satellite::time;
 use crate::app::satellite::{DetailField, SatellitePage};
-use crate::flash_map::{MAX_SATELLITES, SatRecord};
+use crate::flash_map::{SatRecord, MAX_SATELLITES};
 use core::fmt::Write as _;
 use embedded_graphics::mono_font::{
     ascii::{FONT_5X8, FONT_6X10},
@@ -53,10 +53,7 @@ impl ListSource for SatListSource<'_> {
     }
 }
 
-fn sat_at_index(
-    sats: &[Option<SatRecord>; MAX_SATELLITES],
-    index: usize,
-) -> Option<&SatRecord> {
+fn sat_at_index(sats: &[Option<SatRecord>; MAX_SATELLITES], index: usize) -> Option<&SatRecord> {
     if index == 0 {
         return None; // "Set Time" header
     }
@@ -131,7 +128,7 @@ impl ListSource for SatDetailSource<'_> {
         match field {
             DetailField::Name => {
                 if editing {
-                    write_sat_name(w, &self.ui.name_edit.buf);
+                    crate::app::name_edit::write_name_plain(&self.ui.name_edit.buf, w);
                 } else {
                     write_sat_name(w, &self.sat.name);
                 }
@@ -230,7 +227,6 @@ impl ListSource for SatDetailSource<'_> {
         }
     }
 }
-
 
 pub fn draw_satellite<D>(lcd: &mut D, app: &app::App)
 where
@@ -345,11 +341,8 @@ where
         .ok();
 }
 
-fn draw_tracking<D>(
-    lcd: &mut D,
-    ui: &app::satellite::SatelliteUi,
-    app: &app::App,
-) where
+fn draw_tracking<D>(lcd: &mut D, ui: &app::satellite::SatelliteUi, app: &app::App)
+where
     D: DrawTarget<Color = BinaryColor>,
 {
     let font5 = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
