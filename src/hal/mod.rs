@@ -8,4 +8,5 @@ pub mod scheduler;
 pub mod spi;
 pub mod timer;
 pub mod uart;
+pub mod uptime;
 pub mod wear_leveled;

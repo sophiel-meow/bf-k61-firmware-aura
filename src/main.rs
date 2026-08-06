@@ -47,6 +47,7 @@ fn main() -> ! {
 
     clock::setup_pll(rcc, flash);
     clock::enable_peripheral_clocks(rcc);
+    hal::uptime::init();
 
     // board pin init
     board::init_power_pins(gpioa);

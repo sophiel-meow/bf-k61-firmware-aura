@@ -3,11 +3,12 @@ use cortex_m::peripheral::SYST;
 
 /// Scale Doppler shift from RX frequency to TX frequency proportionally.
 /// Returns Doppler correction in Hz for the TX side.
+/// CHANGE THE SIGN!
 pub fn scale_doppler_to_tx(doppler_rx_hz: i32, rx_freq_hz: u32, tx_freq_hz: u32) -> i32 {
     if rx_freq_hz > 0 {
-        (doppler_rx_hz as i64 * tx_freq_hz as i64 / rx_freq_hz as i64) as i32
+        -((doppler_rx_hz as i64 * tx_freq_hz as i64 / rx_freq_hz as i64) as i32)
     } else {
-        doppler_rx_hz
+        -doppler_rx_hz
     }
 }
 

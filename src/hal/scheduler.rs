@@ -1,7 +1,16 @@
+use super::uptime;
+
+/// `uptime::now()` ticks (100us each) per period. Kept in the same unit as
+/// `uptime` so `tick()` never needs to divide.
+const PERIOD_50MS: u16 = 500;
+const PERIOD_100MS: u16 = 1000;
+const PERIOD_500MS: u16 = 5000;
+
 pub struct Scheduler {
-    ticks_50ms: u8,
-    ticks_100ms: u8,
-    ticks_500ms: u8,
+    last: u16,
+    acc_50: u16,
+    acc_100: u16,
+    acc_500: u16,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -12,32 +21,35 @@ pub struct Due {
 }
 
 impl Scheduler {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Scheduler {
-            ticks_50ms: 0,
-            ticks_100ms: 0,
-            ticks_500ms: 0,
+            last: uptime::now(),
+            acc_50: 0,
+            acc_100: 0,
+            acc_500: 0,
         }
     }
 
     pub fn tick(&mut self) -> Due {
+        let now = uptime::now();
+        let elapsed = now.wrapping_sub(self.last);
+        self.last = now;
+
         let mut due = Due::default();
 
-        self.ticks_50ms += 1;
-        if self.ticks_50ms >= 5 {
-            self.ticks_50ms = 0;
+        self.acc_50 = self.acc_50.wrapping_add(elapsed);
+        if self.acc_50 >= PERIOD_50MS {
+            self.acc_50 -= PERIOD_50MS;
             due.every_50ms = true;
         }
-
-        self.ticks_100ms += 1;
-        if self.ticks_100ms >= 10 {
-            self.ticks_100ms = 0;
+        self.acc_100 = self.acc_100.wrapping_add(elapsed);
+        if self.acc_100 >= PERIOD_100MS {
+            self.acc_100 -= PERIOD_100MS;
             due.every_100ms = true;
         }
-
-        self.ticks_500ms += 1;
-        if self.ticks_500ms >= 50 {
-            self.ticks_500ms = 0;
+        self.acc_500 = self.acc_500.wrapping_add(elapsed);
+        if self.acc_500 >= PERIOD_500MS {
+            self.acc_500 -= PERIOD_500MS;
             due.every_500ms = true;
         }
 
