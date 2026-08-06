@@ -155,6 +155,21 @@ where
     draw_headlines(lcd, "RELEASE", "ALL KEYS");
 }
 
+pub fn draw_format_prompt<D>(lcd: &mut D)
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    clear(lcd);
+    draw_centered_big(lcd, "FORMAT", 20);
+    draw_centered_big(lcd, "FLASH?", 35);
+    Line::new(Point::new(0, 40), Point::new(127, 40))
+        .into_styled(PrimitiveStyle::with_stroke(BinaryColor::On, 1))
+        .draw(lcd)
+        .ok();
+    draw_firmware_banner(lcd, "MENU=ERASE", 40);
+    draw_centered_small(lcd, "BACKUP FIRST!!!", 61);
+}
+
 /// Boot display mode 1: "VOLTAGE" / actual battery voltage, f4hwn-style.
 pub fn draw_voltage<D>(lcd: &mut D, voltage_cv: u16)
 where

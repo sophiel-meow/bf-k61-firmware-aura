@@ -20,7 +20,7 @@ use app::satellite;
 use device::display::{Backlight, Display};
 use device::flashlight::Flashlight;
 use device::fm_radio::FmRadio;
-use device::keypad::Keypad;
+use device::keypad::{KeyId, Keypad};
 use device::power::Power;
 use device::radio::{AniConfig, ChannelConfig, Modulation, Power as TxPower, Radio, SubAudio};
 use device::storage::Storage;
@@ -70,6 +70,9 @@ fn main() -> ! {
     board::init_vox_adc_pin(gpioa);
     board::init_keypad_pins(gpiob, gpioc, gpiof);
     board::init_rx_led_pin(gpioa);
+    // Constructed here (rather than right before its first use, as before)
+    // so it's available for the first-boot format-confirmation gate below.
+    let mut keypad = Keypad::new(gpiob, gpioc, gpiof);
 
     let mut dbg = uart::DebugUart::new(usart1, clock::SYSCLK_HZ, 115_200);
     uart::install_bootloader_trampoline();
@@ -78,6 +81,11 @@ fn main() -> ! {
 
     let mut cp = cortex_m::Peripherals::take().unwrap();
     unsafe { cp.NVIC.set_priority(kd32f328_pac::Interrupt::USART1, 0) };
+    // Enabled this early (rather than just before the main loop, as before)
+    // so UART RX -- hence CPS handshake detection -- already works during
+    // the first-boot format-confirmation gate below, before `App` exists.
+    // USART1 is the only interrupt configured at this point.
+    unsafe { cortex_m::interrupt::enable() };
 
     // display
     let spi_bus = spi::SpiBus::new(spi2, spi::ClockMode::Mode3, 8);
@@ -109,6 +117,33 @@ fn main() -> ! {
 
     let flash_spi = spi::SpiBus::new(spi1, spi::ClockMode::Mode3, 4);
     let mut storage = Storage::new(norflash::NorFlash::new(flash_spi, gpioa));
+
+    // First-boot format gate
+    if !storage.is_first_boot_done() {
+        writeln!(dbg, "first boot: awaiting MENU press or CPS dump").ok();
+        ui::boot::draw_format_prompt(display.as_draw_target());
+        display.flush();
+
+        let mut cps_handshake = cps::HandshakeDetector::new();
+        while !keypad.is_pressed(&mut cp.SYST, KeyId::Menu) {
+            if cps_handshake.poll() {
+                ui::cps::draw_programming(display.as_draw_target());
+                display.flush();
+                cps::run_preboot_dump_session(&mut storage, &mut cp.SYST, &mut dbg);
+                ui::boot::draw_format_prompt(display.as_draw_target());
+                display.flush();
+            }
+            delay::ms(&mut cp.SYST, 10);
+        }
+
+        writeln!(
+            dbg,
+            "formatting: settings/VFO/contacts/satellites/FM/logo/SSTV"
+        )
+        .ok();
+        storage.first_boot_format();
+        storage.mark_first_boot_done();
+    }
 
     let cal_buf = storage.read_calibration();
     writeln!(dbg, "norflash cal block @0xf210: {:02x?}", cal_buf).ok();
@@ -164,8 +199,6 @@ fn main() -> ! {
 
     // FM broadcast chip (RDA5807)
     let fm_radio = FmRadio::new(gpioa);
-
-    let mut keypad = Keypad::new(gpiob, gpioc, gpiof);
 
     if radio.ptt_asserted() || keypad.any_pressed(&mut cp.SYST) {
         writeln!(dbg, "PTT/key held at boot, waiting for release").ok();
@@ -235,8 +268,6 @@ fn main() -> ! {
         app.master_freq_hz()
     )
     .ok();
-
-    unsafe { cortex_m::interrupt::enable() };
 
     // scheduler + main loop
     let mut scheduler = scheduler::Scheduler::new();

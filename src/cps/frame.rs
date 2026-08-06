@@ -18,6 +18,10 @@ pub const CMD_WRITE_LOGO: u8 = 0x6C; // 'l'
 pub const CMD_SSTV_ERASE: u8 = 0x53; // 'S'  — erase SSTV image sector
 pub const CMD_SSTV_WRITE: u8 = 0x73; // 's'  — write 64-byte chunk (ADDR=chunk index)
 
+/// Raw physical-SPI-flash dump, read-only, bypassing every logical/CPS
+/// window — for backing up the whole chip regardless of what's in it
+pub const CMD_READ_FLASH_RAW: u8 = 0x44; // 'D' — dump
+
 pub const CMD_ERROR: u8 = 0xEE;
 
 pub const ERR_BAD_CRC: u8 = 0x01;

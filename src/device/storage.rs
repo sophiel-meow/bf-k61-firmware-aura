@@ -266,14 +266,18 @@ impl Storage {
         sentinel[0] == 0x00
     }
 
-    /// Erase the SSTV image sector and set the sentinel.
-    pub fn erase_sstv_image(&mut self) {
+    fn erase_sstv_sectors(&mut self) {
         let start_sector = (addr::SSTV_IMAGE_ADDR / SECTOR_SIZE) * SECTOR_SIZE;
         let end = addr::SSTV_IMAGE_ADDR + SSTV_IMAGE_SIZE as u32;
         let end_sector = ((end + SECTOR_SIZE) / SECTOR_SIZE) * SECTOR_SIZE;
         for sector in (start_sector..end_sector).step_by(SECTOR_SIZE as usize) {
             self.norflash.erase_sector(sector);
         }
+    }
+
+    /// Erase the SSTV image sector and set the sentinel.
+    pub fn erase_sstv_image(&mut self) {
+        self.erase_sstv_sectors();
         // Write sentinel: 0x00 = "image present"
         let sentinel = [0x00u8; 1];
         self.norflash
@@ -295,6 +299,38 @@ impl Storage {
         self.norflash.erase_sector(addr::VFO_INFO_ADDR);
         self.norflash.erase_sector(addr::RADIO_IMFOS_ADDR);
         self.norflash.erase_sector(addr::SYSTEMRAN_ADDR);
+    }
+
+    /// True once `first_boot_format` has run on this device
+    pub fn is_first_boot_done(&mut self) -> bool {
+        let mut buf = [0u8; flash_map::FIRST_BOOT_MAGIC.len()];
+        self.norflash
+            .read_bytes(addr::FIRST_BOOT_MARKER_ADDR, &mut buf);
+        buf == flash_map::FIRST_BOOT_MAGIC
+    }
+
+    pub fn mark_first_boot_done(&mut self) {
+        self.norflash.erase_sector(addr::FIRST_BOOT_MARKER_ADDR);
+        self.norflash
+            .write_bytes(addr::FIRST_BOOT_MARKER_ADDR, &flash_map::FIRST_BOOT_MAGIC);
+    }
+
+    /// One-time cleanup for a device that may still carry non-erased
+    /// factory data in flash regions our own record parsers only treat as
+    /// "blank" when literally all-`0xFF` (voice-prompt audio at `SAT_ADDR`,
+    /// DTMF codes, etc. Deliberately leaves the channel table alone: its byte
+    /// layout was match the factory's
+    pub fn first_boot_format(&mut self) {
+        self.factory_reset(); // VFO, settings, channel-state
+        self.norflash.erase_sector(addr::DTMFINFOR_ADDR); // ANI id + DTMF contacts
+        self.norflash.erase_sector(addr::FM_ADDR);
+        self.norflash.erase_sector(addr::SAT_ADDR);
+        self.norflash.erase_sector(addr::BOOT_LOGO_ADDR);
+        self.erase_sstv_sectors();
+    }
+
+    pub fn read_raw(&mut self, addr: u32, buf: &mut [u8]) {
+        self.norflash.read_bytes(addr, buf);
     }
 
     pub fn load_satellites(&mut self) -> [Option<SatRecord>; MAX_SATELLITES] {

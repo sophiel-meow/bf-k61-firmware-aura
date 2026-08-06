@@ -340,7 +340,7 @@ pub fn value_text_for(app: &App, index: usize, item: SettingItem, w: &mut dyn Wr
     match item {
         SettingItem::Info => {
             let _ = if app.settings_ui.info_page == 0 {
-                write!(w, "Aura {}", FIRMWARE_VERSION)
+                write!(w, "{}", FIRMWARE_VERSION)
             } else {
                 write!(w, "UV-K6x")
             };

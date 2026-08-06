@@ -22,6 +22,9 @@ pub mod addr {
     // pub const DTMF_OFFLINE_ADDR: u32 = 0xA190;
 
     // pub const SCAN_LIST_ADDR: u32 = 0xB000;
+    /// Reuses the factory's unused-by-us "scan list" sector to hold the
+    /// first-boot marker
+    pub const FIRST_BOOT_MARKER_ADDR: u32 = 0xB000;
 
     // pub const FM_IMFOS_ADDR: u32 = 0xC000;
     pub const FM_ADDR: u32 = 0xC000;
@@ -50,6 +53,7 @@ pub mod addr {
     pub const BOOT_TEXT_ADDR: u32 = 0x9100;
     pub const BOOT_TUNE_ADDR: u32 = 0x9200;
     pub const BATTERY_CAL_ADDR: u32 = 0x9300;
+    pub const APRS_SETTINGS_ADDR: u32 = 0x9400;
 
     pub const SAT_ADDR: u32 = 0x000D_0000; // voice prompt file for original fw
 
@@ -58,6 +62,10 @@ pub mod addr {
 
 /// Maximum number of satellites stored in SPI flash.
 pub const MAX_SATELLITES: usize = 20;
+
+/// Written to `addr::FIRST_BOOT_MARKER_ADDR` once the first-boot format
+/// prompt has run
+pub const FIRST_BOOT_MAGIC: [u8; 4] = *b"AURA";
 
 /// Raw byte size of the boot-logo bitmap at `addr::BOOT_LOGO_ADDR`: 8 pages
 /// x 128 columns x 1 byte/column, the ST7565 controller's native page
@@ -648,8 +656,8 @@ impl Settings {
         band_long: 0,   // None
         ani_tx: false,
         rptrl: 0,
-        vox_delay: 5,         // 1.0s, matching the previous hardcoded hang time
-        boot_display_mode: 3, // Logo (previous default was "show the OEM logo")
+        vox_delay: 5, // 1.0s, matching the previous hardcoded hang time
+        boot_display_mode: 2,
         boot_sound_enabled: false,
         boot_text_line1: [0; 16],
         boot_text_line2: [0; 16],
@@ -748,7 +756,7 @@ impl Settings {
             aprs_bat_volt: buf[191] != 0,
             aprs_custom_comment,
             aprs_ssid: buf[209].min(15),
-            aprs_symbol_idx: buf[210].min(5),
+            aprs_symbol_idx: buf[210].min(10),
             aprs_power: buf[211].min(2),
         }
     }

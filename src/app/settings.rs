@@ -266,7 +266,7 @@ impl SettingItem {
             SettingItem::BootSnd => "BOOTSND",
             SettingItem::BattCal => "BATCAL",
             SettingItem::FLock => "FLOCK",
-            SettingItem::Info => "INFO",
+            SettingItem::Info => "VER",
             SettingItem::Reset => "RESET",
             SettingItem::AprsCall => "CALLSIGN",
             SettingItem::AprsFreq => "FREQ",

@@ -225,4 +225,11 @@ impl Keypad {
     pub fn any_pressed(&mut self, syst: &mut SYST) -> bool {
         self.scan(syst).is_some()
     }
+
+    /// Raw immediate scan for one specific key, bypassing debounce/queueing
+    /// -- for one-off checks outside the normal poll loop (e.g. the
+    /// first-boot format prompt in `main.rs`, before `App` exists).
+    pub fn is_pressed(&mut self, syst: &mut SYST, key: KeyId) -> bool {
+        self.scan(syst) == Some(key)
+    }
 }

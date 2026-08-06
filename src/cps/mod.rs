@@ -6,6 +6,7 @@ use display_interface::WriteOnlyDataCommand;
 
 use crate::app::App;
 use crate::device::display::Display;
+use crate::device::storage::Storage;
 use crate::flash_map::{self, addr, MAX_SATELLITES, SAT_RECORD_SIZE};
 use crate::hal::clock::SYSCLK_HZ;
 use crate::hal::delay;
@@ -107,10 +108,63 @@ pub fn run_session<DI: WriteOnlyDataCommand>(
             frame::CMD_SSTV_WRITE => {
                 handle_sstv_write(app, dbg, frame.addr, &frame.data[..frame.len])
             }
+            frame::CMD_READ_FLASH_RAW => handle_read_flash_raw(app.storage_mut(), dbg, frame.addr),
             frame::CMD_END => {
                 send_response(dbg, frame::CMD_END, frame.addr, &[]);
                 delay::ms(syst, 5); // let the ACK bytes drain out before reset
                 SCB::sys_reset();
+            }
+            _ => send_error(dbg, frame.addr, frame::ERR_BAD_LEN),
+        }
+    }
+}
+
+/// Minimal read-only session usable before `App` exists, during the
+/// first-boot format-confirmation prompt in `main.rs`: understands only
+/// the handshake, `CMD_READ_FLASH_RAW` and `CMD_END`, so a host tool can
+/// back up the whole chip before anything gets erased. Unlike
+/// `run_session`, this *returns* (rather than resetting the MCU) once the
+/// host goes idle or sends `CMD_END`, there's no App/radio state to
+/// unwind at this point in boot, so `main.rs` can just go back to waiting
+/// for the MENU press.
+pub fn run_preboot_dump_session(storage: &mut Storage, syst: &mut SYST, dbg: &mut DebugUart) {
+    dbg.write_byte(ACK);
+
+    syst.set_clock_source(SystClkSource::Core);
+    syst.set_reload(SYSCLK_HZ / 1000 - 1);
+    syst.clear_current();
+    syst.enable_counter();
+
+    let mut reader = frame::FrameReader::new();
+    let mut idle_ms: u32 = 0;
+
+    loop {
+        if syst.has_wrapped() {
+            idle_ms += 1;
+            if idle_ms >= IDLE_TIMEOUT_MS {
+                return;
+            }
+        }
+
+        let Some(byte) = uart::take_byte() else {
+            continue;
+        };
+        idle_ms = 0;
+
+        let frame = match reader.feed(byte) {
+            frame::FeedResult::Pending => continue,
+            frame::FeedResult::CrcError { addr } => {
+                send_error(dbg, addr, frame::ERR_BAD_CRC);
+                continue;
+            }
+            frame::FeedResult::Frame(frame) => frame,
+        };
+
+        match frame.cmd {
+            frame::CMD_READ_FLASH_RAW => handle_read_flash_raw(storage, dbg, frame.addr),
+            frame::CMD_END => {
+                send_response(dbg, frame::CMD_END, frame.addr, &[]);
+                return;
             }
             _ => send_error(dbg, frame.addr, frame::ERR_BAD_LEN),
         }
@@ -174,9 +228,18 @@ fn handle_read(app: &mut App, dbg: &mut DebugUart, wire_addr: u16) {
             .unwrap_or(flash_map::Settings::DEFAULT);
         buf[..2].copy_from_slice(&settings.battery_cal_raw.to_le_bytes());
         Some(2)
+    } else if logical == addr::APRS_SETTINGS_ADDR {
+        let settings = app
+            .storage_mut()
+            .load_settings()
+            .unwrap_or(flash_map::Settings::DEFAULT);
+        buf[..52].copy_from_slice(&settings.to_bytes()[160..212]);
+        Some(52)
     } else if (SAT_CPS_BASE..SAT_CPS_BASE + MAX_SATELLITES as u32 * SAT_RECORD_SIZE as u32)
         .contains(&logical)
-        && logical.wrapping_sub(SAT_CPS_BASE).is_multiple_of(SAT_RECORD_SIZE as u32)
+        && logical
+            .wrapping_sub(SAT_CPS_BASE)
+            .is_multiple_of(SAT_RECORD_SIZE as u32)
     {
         let idx = (logical - SAT_CPS_BASE) as usize / SAT_RECORD_SIZE;
         let sats = app.storage_mut().load_satellites();
@@ -263,9 +326,21 @@ fn handle_write(app: &mut App, dbg: &mut DebugUart, wire_addr: u16, data: &[u8])
         settings.battery_cal_raw = u16::from_le_bytes([data[0], data[1]]);
         app.storage_mut().save_settings(&settings);
         true
+    } else if logical == addr::APRS_SETTINGS_ADDR && data.len() == 52 {
+        let current = app
+            .storage_mut()
+            .load_settings()
+            .unwrap_or(flash_map::Settings::DEFAULT);
+        let mut raw = current.to_bytes();
+        raw[160..212].copy_from_slice(data);
+        app.storage_mut()
+            .save_settings(&flash_map::Settings::from_bytes(&raw));
+        true
     } else if (SAT_CPS_BASE..SAT_CPS_BASE + MAX_SATELLITES as u32 * SAT_RECORD_SIZE as u32)
         .contains(&logical)
-        && logical.wrapping_sub(SAT_CPS_BASE).is_multiple_of(SAT_RECORD_SIZE as u32)
+        && logical
+            .wrapping_sub(SAT_CPS_BASE)
+            .is_multiple_of(SAT_RECORD_SIZE as u32)
         && data.len() == SAT_RECORD_SIZE
     {
         let idx = (logical - SAT_CPS_BASE) as usize / SAT_RECORD_SIZE;
@@ -342,6 +417,23 @@ fn handle_read_boot(dbg: &mut DebugUart, wire_addr: u16) {
     let src = (BOOTLOADER_BASE + offset) as *const u8;
     unsafe { core::ptr::copy_nonoverlapping(src, buf.as_mut_ptr(), buf.len()) };
     send_response(dbg, frame::CMD_READ_BOOT, wire_addr, &buf);
+}
+
+/// XM25QH16C: 16Mbit = 2MiB
+const FLASH_CHIP_SIZE: u32 = 0x20_0000;
+/// `wire_addr` is a block index at this granularity, not a byte offset --
+/// 2MB doesn't fit a 16-bit byte offset
+const FLASH_RAW_CHUNK: u32 = 64;
+
+fn handle_read_flash_raw(storage: &mut Storage, dbg: &mut DebugUart, wire_addr: u16) {
+    let addr = wire_addr as u32 * FLASH_RAW_CHUNK;
+    if addr + FLASH_RAW_CHUNK > FLASH_CHIP_SIZE {
+        send_error(dbg, wire_addr, frame::ERR_BAD_ADDR);
+        return;
+    }
+    let mut buf = [0u8; FLASH_RAW_CHUNK as usize];
+    storage.read_raw(addr, &mut buf);
+    send_response(dbg, frame::CMD_READ_FLASH_RAW, wire_addr, &buf);
 }
 
 fn send_response(dbg: &mut DebugUart, cmd: u8, addr: u16, data: &[u8]) {
