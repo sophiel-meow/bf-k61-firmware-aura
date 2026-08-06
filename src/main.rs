@@ -228,7 +228,7 @@ fn main() -> ! {
             wide_band: true,
             power: TxPower::Low,
             subaudio_tx: SubAudio::None,
-            subaudio_rx: SubAudio::Ctcss(885),
+            subaudio_rx: SubAudio::None,
             modulation: Modulation::Fm,
         },
         &mut cp.SYST,

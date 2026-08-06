@@ -662,7 +662,7 @@ impl Settings {
         boot_text_line1: [0; 16],
         boot_text_line2: [0; 16],
         boot_tune: [(0, 0); 48],
-        battery_cal_raw: 2731,
+        battery_cal_raw: 2537,
         band_lock: 0, // CE & CN
         bk_in: 0,
         aprs_callsign: [0; 7],

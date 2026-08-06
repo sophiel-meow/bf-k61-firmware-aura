@@ -24,7 +24,7 @@ pub fn tracking_ptt_press(
     // radio.set_frequency(tx_freq_hz);
     radio.set_tx_frequency(corrected_tx);
     radio.set_subaudio_tx(subaudio_tx);
-    radio.set_power(Power::Low);
+    radio.set_power(Power::High);
     radio.set_wide_bandwidth(wide);
 
     radio.enter_tx(syst)
