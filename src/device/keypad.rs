@@ -1,12 +1,14 @@
 use crate::board;
 use crate::hal::delay;
+use crate::hal::uptime;
+
 use cortex_m::peripheral::SYST;
 use kd32f328_pac::gpiof;
 
 const SETTLE_US: u32 = 5;
-const LONG_PRESS_TICKS: u32 = 100; // 1000ms @ 10ms/tick
-const REPEAT_FIRE_TICKS: u32 = 150; // 1500ms @ 10ms/tick
-const REPEAT_RESET_TICKS: u32 = 140; // re-fires every 10 ticks (100ms) after
+const LONG_PRESS_TICKS: u32 = 10_000; // 1000ms @ 100us/tick
+const REPEAT_FIRE_TICKS: u32 = 15_000; // 1500ms @ 100us/tick
+const REPEAT_RESET_TICKS: u32 = 14_000; // re-fires every 1000 ticks (100ms) after
 const EVENT_QUEUE_CAP: usize = 8;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -126,6 +128,7 @@ pub struct Keypad {
     raw_prev: Option<KeyId>,
     stable: Option<KeyId>,
     hold_ticks: u32,
+    last_poll: u16,
     long_fired: bool,
     queue: EventQueue,
 }
@@ -143,6 +146,7 @@ impl Keypad {
             raw_prev: None,
             stable: None,
             hold_ticks: 0,
+            last_poll: uptime::now(),
             long_fired: false,
             queue: EventQueue::new(),
         }
@@ -163,10 +167,11 @@ impl Keypad {
         None
     }
 
-    /// Scans the matrix once and updates debounce/long-press/repeat state,
-    /// pushing any resulting events onto the internal queue. Call on a
-    /// steady ~10ms cadence.
     pub fn poll(&mut self, syst: &mut SYST) {
+        let now = uptime::now();
+        let elapsed = now.wrapping_sub(self.last_poll);
+        self.last_poll = now;
+
         let raw = self.scan(syst);
 
         if raw != self.raw_prev {
@@ -176,7 +181,7 @@ impl Keypad {
 
         if raw == self.stable {
             if let Some(key) = self.stable {
-                self.hold_ticks += 1;
+                self.hold_ticks += elapsed as u32;
                 if !self.long_fired && key.supports_long() && self.hold_ticks >= LONG_PRESS_TICKS {
                     self.long_fired = true;
                     self.queue.push(KeyEvent {

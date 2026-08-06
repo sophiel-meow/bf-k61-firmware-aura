@@ -161,7 +161,7 @@ pub(super) fn toggle_power(app: &mut App, syst: &mut SYST) {
         Power::Low => Power::Mid,
         Power::Mid => Power::High,
     };
-    sync_watching_to_master(app, syst);
+    commit_side_change(app, syst);
 }
 
 pub(super) fn toggle_wide_narrow(app: &mut App, syst: &mut SYST) {
