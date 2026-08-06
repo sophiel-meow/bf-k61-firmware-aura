@@ -1062,12 +1062,13 @@ impl Radio {
         syst: &mut SYST,
         tx_freq_hz: u32,
         subaudio_tx: SubAudio,
+        power: Power,
         initial_tone: u16,
     ) {
         self.fd6818.set_frequency_hz(syst, tx_freq_hz);
         self.fd6818.set_wide_bandwidth(syst, true);
         self.fd6818.set_subaudio_tx(syst, subaudio_tx);
-        self.fd6818.pa_enable(syst, Power::Low);
+        self.fd6818.pa_enable(syst, power);
         if tx_freq_hz >= 300_000_000 {
             self.fd6818.set_tx_band_uhf(syst);
         } else {

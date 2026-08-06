@@ -1262,6 +1262,7 @@ impl App {
 
         let tx_freq_hz = self.side_tx_freq_hz(self.master);
         let subaudio_tx = self.side_subaudio_tx(self.master);
+        let tx_power = self.side_power(self.master);
 
         let completed = sstv::tx::transmit_sstv(
             &mut self.radio,
@@ -1273,6 +1274,7 @@ impl App {
             &text,
             tx_freq_hz,
             subaudio_tx,
+            tx_power,
             &mut self.sstv.tx_line,
         );
 

@@ -83,7 +83,7 @@ impl SettingsGroup {
     pub fn label(self) -> &'static str {
         match self {
             SettingsGroup::Radio => "RADIO",
-            SettingsGroup::Sig => "SIG",
+            SettingsGroup::Sig => "AUDIO",
             SettingsGroup::Display => "DISP",
             SettingsGroup::Keys => "KEYS",
             SettingsGroup::Ani => "ANI",
@@ -269,17 +269,17 @@ impl SettingItem {
             SettingItem::Info => "INFO",
             SettingItem::Reset => "RESET",
             SettingItem::AprsCall => "CALLSIGN",
-            SettingItem::AprsFreq => "APRSFRQ",
-            SettingItem::AprsLat => "APRSLAT",
-            SettingItem::AprsLon => "APRSLON",
-            SettingItem::AprsPath => "APRSPTH",
-            SettingItem::AprsDevInfo => "APRDEV",
-            SettingItem::AprsDevName => "APRDNAM",
-            SettingItem::AprsBatVolt => "APRBAT",
-            SettingItem::AprsComment => "APRCMSG",
-            SettingItem::AprsSsid => "APRSSID",
-            SettingItem::AprsSymbol => "APRSYM",
-            SettingItem::AprsPower => "APRSPWR",
+            SettingItem::AprsFreq => "FREQ",
+            SettingItem::AprsLat => "LAT",
+            SettingItem::AprsLon => "LON",
+            SettingItem::AprsPath => "PATH",
+            SettingItem::AprsDevInfo => "NAME-EN",
+            SettingItem::AprsDevName => "DEVNAME",
+            SettingItem::AprsBatVolt => "BATT-EN",
+            SettingItem::AprsComment => "COMMENT",
+            SettingItem::AprsSsid => "SSID",
+            SettingItem::AprsSymbol => "SYMBOL",
+            SettingItem::AprsPower => "POWER",
         }
     }
 

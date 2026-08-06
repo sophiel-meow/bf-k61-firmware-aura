@@ -3,6 +3,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::device::keypad::Keypad;
 use crate::device::power::Power;
+use crate::device::radio::Power as TxPower;
 use crate::device::radio::Radio;
 use crate::device::storage::Storage;
 use crate::hal::{delay, timer};
@@ -480,14 +481,20 @@ pub fn transmit_sstv(
     text: &TextLines,
     tx_freq_hz: u32,
     subaudio_tx: crate::device::radio::SubAudio,
+    tx_power: TxPower,
     tx_line: &mut u16,
 ) -> bool {
     let luma_lut = build_luma_lut();
     let sync_word = tone_reg_word(SYNC_HZ);
     let porch_word = tone_reg_word(PORCH_HZ);
 
-    // Frequency and subaudio come from the master side
-    radio.enter_tx_sstv(syst, tx_freq_hz, subaudio_tx, tone_reg_word(LEADER_HZ));
+    radio.enter_tx_sstv(
+        syst,
+        tx_freq_hz,
+        subaudio_tx,
+        tx_power,
+        tone_reg_word(LEADER_HZ),
+    );
 
     // delay::ms(syst, 900);
 
