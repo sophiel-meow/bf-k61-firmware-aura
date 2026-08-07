@@ -26,6 +26,21 @@ Know and follow your local radio regulations, and hold the appropriate license b
 - Customisable boot logo and boot melody
 - CPS (programming) support via a custom wire protocol and a CHIRP driver
 
+## Screenshots
+
+<table>
+<tr>
+<td width="33%"><img src="assets/main.webp" alt="Home screen with dual watch"><br>Home screen — dual watch (memory + VFO)</td>
+<td width="33%"><img src="assets/menu.webp" alt="App menu"><br>App menu</td>
+<td width="33%"><img src="assets/spectrum.webp" alt="Spectrum scan"><br>Spectrum scan</td>
+</tr>
+<tr>
+<td width="33%"><img src="assets/sat.webp" alt="Satellite tracking"><br>Satellite pass tracking (Doppler-corrected)</td>
+<td width="33%"><img src="assets/aprs.webp" alt="APRS digipeater path settings"><br>APRS TX</td>
+<td width="33%"><img src="assets/sstv.webp" alt="SSTV CQ detail entry"><br>SSTV (Robot 36 Colour) TX</td>
+</tr>
+</table>
+
 ## Relationship to the Factory Firmware
 
 Baofeng publishes source-available firmware for the UV-K6x series at [cnt7/BAOFENG-UV-K6-Firmware](https://github.com/cnt7/BAOFENG-UV-K6-Firmware), under the Baofeng Public License (BFPL-1.0) — a custom non-free license that does not permit redistributing modified or derivative code under a free license.
