@@ -60,7 +60,7 @@ where
         }
     }
 
-    Text::new("AB BAND  MENU SAVE  EXIT", Point::new(2, 62), small)
+    Text::new("AB BAND  MENU SAVE", Point::new(2, 62), small)
         .draw(lcd)
         .ok();
 }
