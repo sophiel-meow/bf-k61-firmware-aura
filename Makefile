@@ -23,10 +23,10 @@ devbin: devbuild
 	cargo objcopy -- -O binary $(TARGET)-dev.bin
 
 flash: bin
-	./tools/flash-rs/target/release/flash $(TARGET).bin /dev/ttyUSB0
+	python ./tools/flash.py $(TARGET).bin /dev/ttyUSB0
 
 devflash: devbin
-	./tools/flash-rs/target/release/flash $(TARGET)-dev.bin /dev/ttyUSB0
+	python ./tools/flash.py $(TARGET)-dev.bin /dev/ttyUSB0
 
 clean:
 	cargo clean

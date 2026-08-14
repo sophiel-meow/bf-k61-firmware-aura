@@ -175,7 +175,7 @@ struct ChannelEdit {
     editing: bool,
     snapshot: i32,
     freq_input: DigitInput<8>,
-    offset_input: DigitInput<8>,
+    offset_input: DigitInput<7>,
     name_edit: NameEdit<12>,
 }
 
@@ -306,7 +306,7 @@ fn value_text_for(edit: &ChannelEdit, index: usize, field: Field, w: &mut dyn Wr
         }
         Field::Offset => {
             let hz = edit.offset_hz;
-            let _ = write!(w, "{}.{:03}k", hz / 1000, hz % 1000);
+            let _ = write!(w, "{}.{:04}", hz / 1_000_000, (hz % 1_000_000) / 100);
         }
         Field::RxCts | Field::TxCts => {
             let sub = if field == Field::RxCts {
@@ -390,7 +390,7 @@ fn commit_freq_input(edit: &mut ChannelEdit) {
 
 fn commit_offset_input(edit: &mut ChannelEdit) {
     if !edit.offset_input.is_empty() {
-        edit.offset_hz = edit.offset_input.value() * 10;
+        edit.offset_hz = edit.offset_input.value() * 100;
         sync_tx_freq(edit);
     }
     edit.offset_input.clear();

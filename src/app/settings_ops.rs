@@ -491,10 +491,10 @@ pub fn value_text_for(app: &App, index: usize, item: SettingItem, w: &mut dyn Wr
         }
         SettingItem::Offse => {
             if app.settings_ui.is_editing(index) {
-                app.settings_ui.offset_input.write_display(4, w);
+                app.settings_ui.offset_input.write_display(3, w);
             } else {
                 let hz = current_value(app, item) as u32;
-                let _ = write!(w, "{}.{:03}k", hz / 1000, hz % 1000);
+                let _ = write!(w, "{}.{:04}", hz / 1_000_000, (hz % 1_000_000) / 100);
             }
         }
         SettingItem::ScanMd => {

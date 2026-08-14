@@ -435,7 +435,7 @@ fn dispatch_offset_input(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
 
 fn commit_offset_input(app: &mut App, syst: &mut SYST) {
     if !app.settings_ui.offset_input.is_empty() {
-        let hz = app.settings_ui.offset_input.value();
+        let hz = app.settings_ui.offset_input.value() * 100;
         settings_ops::apply(app, syst, settings::SettingItem::Offse, hz as i32);
         app.save_settings();
     }
