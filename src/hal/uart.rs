@@ -80,10 +80,10 @@ impl<'a> DebugUart<'a> {
     /// pclk_hz: bus freq (APB2 for USART1)
     /// OVER8 == 0 (16x oversampling)
     pub fn new(regs: &'a usart1::RegisterBlock, pclk_hz: u32, baud: u32) -> Self {
-        // RAW BRR = round(pclk*16/baud)；
+        // RAW BRR = round(pclk/baud)；
         // high 12 bit (bit4..15): mantissa
         // low 4 bit: fraction (1/16)
-        let raw = (pclk_hz as u64 * 16 + baud as u64 / 2) / baud as u64;
+        let raw = (pclk_hz + baud / 2) / baud;
         let mantissa = (raw >> 4) as u16;
         let fraction = (raw & 0xF) as u8;
 
