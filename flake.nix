@@ -36,6 +36,7 @@
             (pkgs.python3.withPackages (ps: [
               ps.pyserial
               ps.numpy
+              ps.pillow
             ]))
             pkgs.gnumake
             pkgs.direwolf
