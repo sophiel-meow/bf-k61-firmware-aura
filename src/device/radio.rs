@@ -616,7 +616,12 @@ impl Radio {
     /// duration, not toggled live and back for every pause in it.
     /// Sidetone only (never keys the transmitter) -- called once at boot,
     /// before the radio has entered RX.
-    pub fn play_boot_tune(&mut self, syst: &mut SYST, tune: &[(u8, u8); 48]) {
+    pub fn play_boot_tune(
+        &mut self,
+        syst: &mut SYST,
+        tune: &[(u8, u8); 48],
+        mut should_abort: impl FnMut(&mut SYST) -> bool,
+    ) -> bool {
         let mut speaker_connected = false;
 
         for &(tone_index, duration) in tune {
@@ -640,7 +645,18 @@ impl Radio {
                 board::set_speaker_switch(self.gpiob, true);
                 speaker_connected = true;
             }
-            delay::ms(syst, duration as u32 * BOOT_TUNE_PERIOD_MS);
+
+            let mut remaining_ms = duration as u32 * BOOT_TUNE_PERIOD_MS;
+            while remaining_ms > 0 {
+                let slice = remaining_ms.min(BOOT_TUNE_PERIOD_MS);
+                delay::ms(syst, slice);
+                remaining_ms -= slice;
+                if should_abort(syst) {
+                    board::set_speaker_switch(self.gpiob, false);
+                    self.fd6818.tx_single_tone_off(syst, false);
+                    return true;
+                }
+            }
         }
         // See `play_tone_sequence`'s doc comment for why the speaker is
         // physically disconnected here, before `tx_single_tone_off`.
@@ -656,6 +672,7 @@ impl Radio {
             .set_af_out(syst, state, self.cfg.wide_band, self.cfg.modulation);
         self.fd6818.set_scramble(syst, self.scramble_level);
         board::set_speaker_switch(self.gpiob, self.audio_open);
+        false
     }
 
     fn play_mdc1200_tone(&mut self, syst: &mut SYST) {

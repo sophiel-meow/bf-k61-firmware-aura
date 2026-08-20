@@ -255,10 +255,23 @@ fn main() -> ! {
     }
     if boot_mode != 0 && app.settings().boot_sound_enabled {
         let tune = app.settings().boot_tune;
-        app.radio_mut().play_boot_tune(&mut cp.SYST, &tune);
+        let aborted = app
+            .radio_mut()
+            .play_boot_tune(&mut cp.SYST, &tune, |syst| power.debounced_off(syst));
+        if aborted {
+            power.shutdown(&mut cp.SYST);
+        }
     }
     if boot_mode != 0 {
-        delay::ms(&mut cp.SYST, 1000);
+        let mut remaining_ms: u32 = 1000;
+        while remaining_ms > 0 {
+            let slice = remaining_ms.min(30);
+            delay::ms(&mut cp.SYST, slice);
+            remaining_ms -= slice;
+            if power.debounced_off(&mut cp.SYST) {
+                power.shutdown(&mut cp.SYST);
+            }
+        }
     }
 
     app.radio_mut().enter_rx(&mut cp.SYST);

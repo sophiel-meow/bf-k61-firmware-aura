@@ -1,4 +1,5 @@
 /target
 /kd32f328-pac/target
 *.bin
+/tools/__pycache__
 

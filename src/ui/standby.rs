@@ -277,8 +277,12 @@ pub(super) fn draw_right_aligned<D>(
 
 /// Faux-bold
 #[allow(dead_code)]
-pub(crate) fn draw_bold<D>(lcd: &mut D, text: &str, pos: Point, font: &embedded_graphics::mono_font::MonoFont)
-where
+pub(crate) fn draw_bold<D>(
+    lcd: &mut D,
+    text: &str,
+    pos: Point,
+    font: &embedded_graphics::mono_font::MonoFont,
+) where
     D: DrawTarget<Color = BinaryColor>,
 {
     let style = MonoTextStyle::new(font, BinaryColor::On);
