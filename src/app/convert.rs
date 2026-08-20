@@ -40,8 +40,8 @@ fn dcs_from_table_index(idx: u16, inverted: bool) -> SubAudio {
 
 pub(super) fn power_from_raw(tx_power: u8) -> Power {
     match tx_power {
-        1 => Power::Low,
-        2 => Power::Mid,
+        2 => Power::Low,
+        1 => Power::Mid,
         _ => Power::High,
     }
 }
@@ -49,8 +49,8 @@ pub(super) fn power_from_raw(tx_power: u8) -> Power {
 pub(super) fn power_to_raw(power: Power) -> u8 {
     match power {
         Power::High => 0,
-        Power::Low => 1,
-        Power::Mid => 2,
+        Power::Mid => 1,
+        Power::Low => 2,
     }
 }
 
