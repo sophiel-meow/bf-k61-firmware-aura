@@ -38,18 +38,21 @@ impl ScanState {
 
 fn find_next_scan_channel(app: &mut App, from: u16, forward: bool) -> Option<u16> {
     let mut n = from;
-    for _ in 0..MAX_CHANNEL_NUM {
+    for _ in 0..=MAX_CHANNEL_NUM {
         n = if forward {
             if n >= MAX_CHANNEL_NUM {
-                1
+                0
             } else {
                 n + 1
             }
-        } else if n <= 1 {
+        } else if n == 0 {
             MAX_CHANNEL_NUM
         } else {
             n - 1
         };
+        if app.storage.is_channel_empty(n) {
+            continue;
+        }
         if app.storage.read_channel(n).scan_add() {
             return Some(n);
         }
