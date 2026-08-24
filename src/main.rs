@@ -24,7 +24,11 @@ use device::keypad::{KeyId, Keypad};
 use device::power::Power;
 use device::radio::{AniConfig, ChannelConfig, Modulation, Power as TxPower, Radio, SubAudio};
 use device::storage::Storage;
-use drivers::{display_spec, fd6818, norflash};
+use drivers::{display_spec, norflash};
+#[cfg(not(feature = "fd6818b"))]
+use drivers::fd6818;
+#[cfg(feature = "fd6818b")]
+use drivers::fd6818b as fd6818;
 use hal::{clock, delay, hal_shim, scheduler, spi, uart};
 use hal_shim::{ClosurePin, SystDelay};
 

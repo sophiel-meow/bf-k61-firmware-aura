@@ -1,10 +1,16 @@
 use crate::board;
+#[cfg(not(feature = "fd6818b"))]
 use crate::drivers::fd6818::{AfOutState, Fd6818};
+#[cfg(feature = "fd6818b")]
+use crate::drivers::fd6818b::{AfOutState, Fd6818};
 use crate::hal::{adc, debounce, delay, timer};
 use cortex_m::peripheral::SYST;
 use kd32f328_pac::{gpioa, gpiof};
 
+#[cfg(not(feature = "fd6818b"))]
 pub use crate::drivers::fd6818::{Modulation, Power, RawTone, SubAudio};
+#[cfg(feature = "fd6818b")]
+pub use crate::drivers::fd6818b::{Modulation, Power, RawTone, SubAudio};
 
 /// How long `end_tx()` holds the tail-elimination tone before actually
 /// cutting the carrier.
@@ -1017,8 +1023,6 @@ impl Radio {
         tx_delay_ms: u32,
         tx_tail_ms: u32,
     ) {
-        use crate::drivers::fd6818::{AfOutState, Modulation};
-
         self.fd6818.set_frequency_hz(syst, freq_hz);
         self.fd6818.set_wide_bandwidth(syst, true);
         self.fd6818.pa_enable(syst, power);

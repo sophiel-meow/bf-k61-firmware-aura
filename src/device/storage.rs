@@ -1,4 +1,7 @@
+#[cfg(not(feature = "fd6818b"))]
 use crate::drivers::fd6818::Power;
+#[cfg(feature = "fd6818b")]
+use crate::drivers::fd6818b::Power;
 use crate::drivers::norflash::{NorFlash, PAGE_SIZE, SECTOR_SIZE};
 use crate::flash_map::{self, addr, SatRecord, MAX_SATELLITES, SAT_RECORD_SIZE, SSTV_IMAGE_SIZE};
 use crate::hal::wear_leveled::WearLeveledRegion;
