@@ -113,6 +113,8 @@ fn main() -> ! {
 
     // rfic
     let mut rfic = fd6818::Fd6818::new(gpiob);
+    let chip_id = rfic.chip_id(&mut cp.SYST);
+    writeln!(dbg, "fd6818 chip id = {chip_id:#06x}").ok();
     rfic.init(&mut cp.SYST);
     writeln!(dbg, "fd6818 init done").ok();
 
