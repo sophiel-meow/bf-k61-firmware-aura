@@ -7,6 +7,25 @@ Aura is a clean-room Rust firmware for the Baofeng UV-K61 series of handheld rad
 > [!WARNING]
 > Use this firmware entirely at your own risk. There is absolutely no guarantee that it will work on your radio — it may even brick it, in which case you'd need to replace the device. That said, have fun.
 
+> **Note (hardware variants):** Boards sold under the Baofeng
+> UV-K6 family (UV-K6, K61, K63, K67, K69, and other rebrands such as the
+> Aigo E618S) may use one of two hardware-incompatible RF chips:
+> **FD6818** or **FD6818B** (or other unidentified RF chips). These two chips are **not register-compatible**
+> — firmware built for one will not work correctly (or at all) on the
+> other, and this is a known cause of "dead"/garbled RX-TX or missing audio
+> after flashing.
+>
+> If your radio misbehaves after flashing this firmware, check
+> **Settings → SYSTEM → CHIPID** to identify which RF chip your unit
+> actually has:
+> - `0x4819` = **FD6818** — the chip the `master` branch's driver targets.
+> - `0x4829` = **FD6818B** — a different, incompatible chip.
+>
+> Support for FD6818B is being developed on the
+> [`fd6818b`](https://github.com/sophiel-meow/bf-k61-firmware-aura/tree/fd6818b) branch, TX/RX works, but it is still incomplete/
+> experimental at this time.
+
+
 ## Wide / Out-of-Band Transmit — Read Before Use
 
 Aura includes a TX frequency lock setting (`FLOCK` in the settings menu). When set to `Unlocked`, the radio can transmit across the full hardware synthesizer range, rather than being restricted to amateur radio allocations.
