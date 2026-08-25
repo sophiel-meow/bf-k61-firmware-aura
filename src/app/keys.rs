@@ -361,14 +361,19 @@ fn dispatch_settings(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
                     settings_ops::factory_reset(app);
                 } else {
                     app.settings_ui.editing = false;
-                    if item != settings::SettingItem::Info {
+                    if item != settings::SettingItem::Info
+                        && item != settings::SettingItem::ChipId
+                    {
                         app.save_settings();
                     }
                 }
             }
             KeyId::Exit if ev.kind == KeyEventKind::Single => {
                 if app.settings_ui.editing {
-                    if item != settings::SettingItem::Info && item != settings::SettingItem::Reset {
+                    if item != settings::SettingItem::Info
+                        && item != settings::SettingItem::ChipId
+                        && item != settings::SettingItem::Reset
+                    {
                         settings_ops::apply(app, syst, item, app.settings_ui.snapshot);
                     }
                     app.settings_ui.editing = false;

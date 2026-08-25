@@ -225,6 +225,7 @@ fn main() -> ! {
     // app class
     let mut app = app::App::new(
         radio,
+        chip_id,
         keypad,
         storage,
         flashlight,

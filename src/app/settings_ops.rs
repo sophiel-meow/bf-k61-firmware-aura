@@ -345,6 +345,10 @@ pub fn value_text_for(app: &App, index: usize, item: SettingItem, w: &mut dyn Wr
                 write!(w, "UV-K6x")
             };
         }
+
+        SettingItem::ChipId => {
+            let _ = write!(w, "{:#06X}", app.chip_id());
+        }
         SettingItem::Reset => {
             if app.settings_ui.is_editing(index) {
                 let _ = write!(w, "Sure? MENU");

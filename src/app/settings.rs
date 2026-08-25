@@ -42,6 +42,7 @@ pub enum SettingItem {
     BattCal,
     FLock,
     Info,
+    ChipId,
     Reset,
     // APRS
     AprsCall,
@@ -156,6 +157,7 @@ impl SettingsGroup {
                 SettingItem::BootMode,
                 SettingItem::BootSnd,
                 SettingItem::Info,
+                SettingItem::ChipId,
                 SettingItem::Reset,
             ],
         }
@@ -163,7 +165,7 @@ impl SettingsGroup {
 }
 
 #[allow(dead_code)]
-pub const SETTINGS_ORDER: [SettingItem; 55] = [
+pub const SETTINGS_ORDER: [SettingItem; 56] = [
     SettingItem::Sql,
     SettingItem::Step,
     SettingItem::Tot,
@@ -206,6 +208,7 @@ pub const SETTINGS_ORDER: [SettingItem; 55] = [
     SettingItem::BattCal,
     SettingItem::FLock,
     SettingItem::Info,
+    SettingItem::ChipId,
     SettingItem::Reset,
     // APRS
     SettingItem::AprsCall,
@@ -267,6 +270,7 @@ impl SettingItem {
             SettingItem::BattCal => "BATCAL",
             SettingItem::FLock => "FLOCK",
             SettingItem::Info => "VER",
+            SettingItem::ChipId => "CHIPID",
             SettingItem::Reset => "RESET",
             SettingItem::AprsCall => "CALLSIGN",
             SettingItem::AprsFreq => "FREQ",
@@ -293,6 +297,7 @@ impl SettingItem {
             SettingItem::Offse
                 | SettingItem::BattCal
                 | SettingItem::Info
+                | SettingItem::ChipId
                 | SettingItem::Reset
                 | SettingItem::AprsCall
                 | SettingItem::AprsDevName
