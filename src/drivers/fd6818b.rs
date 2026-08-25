@@ -148,20 +148,19 @@ const GPIO5: u16 = 0x0020;
 /// | [15:8]| APC target (calibrated per-radio/per-band, from flash)    |
 /// | [7]   | PACTL output enable, 1 = on                               |
 /// | [6]   | reserved                                                  |
-/// | [5:3] | `padrv_gain`, 111 = max .. 000 = min                      |
-/// | [2:0] | `pa_gain_vreg`, 111 = max .. 000 = min                    |
+/// | [5:3] | `padrv_gain`, 111 = max .. 000 = min (BK4819 numbering)   |
+/// | [2:0] | `pa_gain_vreg`, 111 = max .. 000 = min (BK4819 numbering) |
+///
+/// The low byte here is BK4829's own fixed gain word.
+/// BK4829 doesn't vary this byte by power level, only by band;
 const REG_PA: u8 = 0x36;
-/// PACTL disabled; gain fields left at max (they are don't-care while the
-/// output is gated off).
-const PA_OFF_VALUE: u16 = 0x007F;
-/// PACTL on, `padrv_gain` = 7, `pa_gain_vreg` = 7 — max driver gain
-/// (datasheet's power table: 8.33dB). Used for the high and mid power
-/// levels, where the level itself is set purely by the APC target.
-const PA_GAIN_HIGH: u16 = 0x00FF;
-/// PACTL on, `padrv_gain` = 2, `pa_gain_vreg` = 7 — 5.69dB, i.e. 2.6dB
-/// below max drive. This is what the original pairs with the low-power APC
-/// table; low power is the one level that backs off the driver itself.
-const PA_GAIN_LOW: u16 = 0x00D7;
+/// PACTL disabled, gain forced to the UHF word (don't-care while gated
+/// off).
+const PA_OFF_VALUE: u16 = 0x0022;
+/// PACTL on (bit7) + BK4829's UHF driver gain (bit[5:0] = 0x22).
+const PA_GAIN_UHF: u16 = 0x00A2;
+/// PACTL on (bit7) + BK4829's VHF driver gain (bit[5:0] = 0x08).
+const PA_GAIN_VHF: u16 = 0x0088;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Power {
@@ -272,7 +271,8 @@ const REG_AF_RX_300_D1: u8 = 0x54;
 const REG_AF_RX_300_D2: u8 = 0x55;
 
 const REG_AF_OUT: u8 = 0x47;
-const AF_OUT_BASE: u16 = 0x6042;
+/// Same base value as BK4819
+const AF_OUT_BASE: u16 = 0x6040;
 const AF_STATE_MUTE: u16 = 0x0000;
 const AF_STATE_RX_AUDIO: u16 = 0x0100;
 const AF_STATE_RX_ALARM_TONE: u16 = 0x0200;
@@ -282,15 +282,9 @@ const AF_STATE_FSK_TEST: u16 = 0x0800;
 /// Beep tone volume is independent of the calibrated wideband/narrowband
 /// levels: fixed digital gain 10, analog gain 2.
 const AF_OUT_BEEP_VOLUME: u16 = 0xB800 | (10 << 4) | 2;
-/// Extra REG 0x47 bit set while demodulating AM audio out (RX only).
-const AM_AF_OUT_BIT: u16 = 0x0600;
 /// REG_VOLUME is fixed to this value in AM mode instead of the calibrated
 /// wideband/narrowband level.
 const AM_VOLUME_FIXED: u16 = 0xB3AA;
-/// Extra REG 0x47 bit set while demodulating in `Modulation::Usb` mode:
-/// ORed onto `AF_STATE_RX_AUDIO` (AF-select field = 1, "FM") this walks the
-/// 4-bit AF-select field from 1 to 5
-const USB_AF_OUT_BIT: u16 = 0x0400;
 
 /// IF frequency selection register.
 ///
@@ -304,12 +298,16 @@ const USB_AF_OUT_BIT: u16 = 0x0400;
 ///   0xE555 = 4.23 kHz IF
 ///   0x0000 = Zero IF (used for USB / CW direct-conversion)
 const REG_IF_SEL: u8 = 0x3D;
+
+#[allow(dead_code)]
 const IF_SEL_8K46: u16 = 0x2AAB;
+#[allow(dead_code)]
 const IF_SEL_ZERO: u16 = 0x0000;
 
-/// REG 0x73 bit4: AFC (automatic frequency control) disable
-/// Needs to be on (AFC off) for anything but FM
+/// REG 0x73 bit4: AFC (automatic frequency control) disable.
+/// FIXME: `init()` writes this once as part of BK4829's fixed init word (`0x4691`);
 const REG_AFC_DISABLE: u8 = 0x73;
+#[allow(dead_code)]
 const AFC_DISABLE_BIT: u16 = 0x0010;
 
 /// REG 0x71: single-tone oscillator frequency (shared by the UI key-beep,
@@ -427,6 +425,11 @@ pub struct Fd6818<'a> {
     rx_match_bit: SubaudioMatchBit,
     tone_active: bool,
     current_wide: bool,
+
+    /// No used.
+    /// Which band `pa_enable()` should use for BK4829's fixed gain word.
+    /// Tobe validated
+    band_uhf: bool,
 }
 
 impl<'a> Fd6818<'a> {
@@ -443,6 +446,7 @@ impl<'a> Fd6818<'a> {
             rx_match_bit: SubaudioMatchBit::Ctcss,
             tone_active: false,
             current_wide: true,
+            band_uhf: true,
         }
     }
 
@@ -470,12 +474,14 @@ impl<'a> Fd6818<'a> {
 
     /// Routes the PA driver to the UHF path (350/400MHz bands).
     pub fn set_tx_band_uhf(&mut self, syst: &mut SYST) {
+        self.band_uhf = true;
         self.set_gpio_bit(syst, GPIO3, false);
         self.set_gpio_bit(syst, GPIO2, true);
     }
 
     /// Routes the PA driver to the VHF path (136/200MHz bands).
     pub fn set_tx_band_vhf(&mut self, syst: &mut SYST) {
+        self.band_uhf = false;
         self.set_gpio_bit(syst, GPIO2, false);
         self.set_gpio_bit(syst, GPIO3, true);
     }
@@ -494,12 +500,13 @@ impl<'a> Fd6818<'a> {
         self.set_gpio_bit(syst, GPIO5, on);
     }
 
-    /// Enables the PA stage at the calibrated APC target for `power`,
-    /// pairing it with that level's driver gain
-    pub fn pa_enable(&mut self, syst: &mut SYST, power: Power) {
-        let gain = match power {
-            Power::Low => PA_GAIN_LOW,
-            Power::Mid | Power::High => PA_GAIN_HIGH,
+    /// Enables the PA stage at the calibrated APC target, paired with
+    /// BK4829's fixed band-dependent driver gain.
+    pub fn pa_enable(&mut self, syst: &mut SYST, _power: Power) {
+        let gain = if self.band_uhf {
+            PA_GAIN_UHF
+        } else {
+            PA_GAIN_VHF
         };
         let value = ((self.pa_target as u16) << 8) | gain;
         self.write_reg(syst, REG_PA, value);
@@ -881,8 +888,7 @@ impl<'a> Fd6818<'a> {
     /// Selects what REG 0x47 routes to the audio-out pin and switches
     /// REG_VOLUME (0x48) alongside it. `wide` selects which calibrated
     /// volume level applies when the state isn't a fixed-volume tone.
-    /// In `Modulation::Am`, RX audio gets an extra REG 0x47 bit and a fixed
-    /// REG_VOLUME value instead of the wideband/narrowband calibration.
+    /// FIXME: validate the modulation
     pub fn set_af_out(
         &mut self,
         syst: &mut SYST,
@@ -898,14 +904,8 @@ impl<'a> Fd6818<'a> {
             AfOutState::CtcDcsTest => AF_STATE_CTC_DCS_TEST,
             AfOutState::FskTest => AF_STATE_FSK_TEST,
         };
-        let mut af_out = AF_OUT_BASE | state_bits;
-        if state == AfOutState::RxAudio {
-            match modulation {
-                Modulation::Am => af_out |= AM_AF_OUT_BIT,
-                Modulation::Usb | Modulation::Cw => af_out |= USB_AF_OUT_BIT,
-                Modulation::Fm | Modulation::Cwf => {}
-            }
-        }
+
+        let af_out = AF_OUT_BASE | state_bits;
         self.write_reg(syst, REG_AF_OUT, af_out);
 
         let vol_reg = if state == AfOutState::Beep {
@@ -923,22 +923,8 @@ impl<'a> Fd6818<'a> {
         self.write_reg(syst, REG_VOLUME, vol_reg);
     }
 
+    // FIXME: validate the modulation in BK4819
     pub fn apply_modulation(&mut self, syst: &mut SYST, modulation: Modulation) {
-        let if_sel = if matches!(modulation, Modulation::Usb | Modulation::Cw) {
-            IF_SEL_ZERO
-        } else {
-            IF_SEL_8K46
-        };
-        self.write_reg(syst, REG_IF_SEL, if_sel);
-
-        let afc_disable = self.read_reg(syst, REG_AFC_DISABLE);
-        let afc_disable = if !matches!(modulation, Modulation::Fm | Modulation::Cwf) {
-            afc_disable | AFC_DISABLE_BIT
-        } else {
-            afc_disable & !AFC_DISABLE_BIT
-        };
-        self.write_reg(syst, REG_AFC_DISABLE, afc_disable);
-
         let (agc5, agc6) = if modulation == Modulation::Am {
             (RXAGC_5_AM, RXAGC_6_AM)
         } else {
@@ -1444,6 +1430,9 @@ impl<'a> Fd6818<'a> {
         // power up
         self.write_reg(syst, REG_POWER, POWER_UP_VALUE);
 
+        // PA held off at boot
+        self.write_reg(syst, REG_PA, PA_OFF_VALUE);
+
         // RX AGC
         self.write_reg(syst, REG_RXAGC_1, 0x03DF);
         self.write_reg(syst, REG_RXAGC_2, 0x03DB);
@@ -1496,5 +1485,9 @@ impl<'a> Fd6818<'a> {
         self.write_reg(syst, 0x4A, 0x5430);
 
         self.write_reg(syst, REG_SUBAUDIO_FREQ, 0x61CE);
+
+        // GPIO initial state
+        self.write_reg(syst, REG_GPIO, 0x9000);
+        self.write_reg(syst, REG_WORK_MODE, 0x0000);
     }
 }
