@@ -1422,6 +1422,10 @@ impl<'a> Fd6818<'a> {
         self.write_reg(syst, REG_STATE, Self::STATE_PREFIX_NARROW);
     }
 
+    pub fn chip_id(&mut self, syst: &mut SYST) -> u16 {
+        self.read_reg(syst, REG_SOFT_RESET)
+    }
+
     pub fn init(&mut self, syst: &mut SYST) {
         // soft reset
         self.write_reg(syst, REG_SOFT_RESET, 0x8000);
