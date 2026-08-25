@@ -141,6 +141,7 @@ pub enum ChannelDisplayMode {
 
 pub struct App {
     pub radio: Radio,
+    chip_id: u16,
     keypad: Keypad,
     storage: Storage,
     flashlight: Flashlight,
@@ -245,8 +246,10 @@ pub struct App {
 }
 
 impl App {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         mut radio: Radio,
+        chip_id: u16,
         keypad: Keypad,
         mut storage: Storage,
         flashlight: Flashlight,
@@ -360,6 +363,7 @@ impl App {
 
         App {
             radio,
+            chip_id,
             keypad,
             storage,
             mode: Mode::Standby,
@@ -912,6 +916,10 @@ impl App {
 
     pub fn settings_index(&self) -> usize {
         self.settings_ui.index
+    }
+
+    pub fn chip_id(&self) -> u16 {
+        self.chip_id
     }
 
     pub fn settings_item_count(&self) -> usize {
