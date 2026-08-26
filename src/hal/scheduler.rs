@@ -2,12 +2,14 @@ use super::uptime;
 
 /// `uptime::now()` ticks (100us each) per period. Kept in the same unit as
 /// `uptime` so `tick()` never needs to divide.
+const PERIOD_10MS: u16 = 100;
 const PERIOD_50MS: u16 = 500;
 const PERIOD_100MS: u16 = 1000;
 const PERIOD_500MS: u16 = 5000;
 
 pub struct Scheduler {
     last: u16,
+    acc_10: u16,
     acc_50: u16,
     acc_100: u16,
     acc_500: u16,
@@ -15,6 +17,7 @@ pub struct Scheduler {
 
 #[derive(Clone, Copy, Default)]
 pub struct Due {
+    pub ticks_10ms: u16,
     pub every_50ms: bool,
     pub every_100ms: bool,
     pub every_500ms: bool,
@@ -24,6 +27,7 @@ impl Scheduler {
     pub fn new() -> Self {
         Scheduler {
             last: uptime::now(),
+            acc_10: 0,
             acc_50: 0,
             acc_100: 0,
             acc_500: 0,
@@ -37,6 +41,10 @@ impl Scheduler {
 
         let mut due = Due::default();
 
+        self.acc_10 = self.acc_10.wrapping_add(elapsed);
+        let n10 = self.acc_10 / PERIOD_10MS;
+        self.acc_10 -= n10 * PERIOD_10MS;
+        due.ticks_10ms = n10;
         self.acc_50 = self.acc_50.wrapping_add(elapsed);
         if self.acc_50 >= PERIOD_50MS {
             self.acc_50 -= PERIOD_50MS;

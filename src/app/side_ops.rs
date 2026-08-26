@@ -120,18 +120,7 @@ pub(super) fn toggle_vfo_channel(app: &mut App, syst: &mut SYST) {
             }
         }
         ChVfoMode::Channel => {
-            let backup = s.vfo_backup;
-            s.vfo_chan = ChVfoMode::Vfo;
-            s.name = [0; 12];
-            s.rx_freq_hz = backup.rx_freq_hz;
-            s.freq_dir = backup.freq_dir;
-            s.offset_hz = backup.offset_hz;
-            s.cfg.wide_band = backup.wide_band;
-            s.cfg.power = backup.power;
-            s.cfg.subaudio_tx = backup.subaudio_tx;
-            s.cfg.subaudio_rx = backup.subaudio_rx;
-            s.ani_target = backup.ani_target;
-            s.refresh_cfg_freqs();
+            s.restore_vfo_from_backup();
         }
     }
 
@@ -213,6 +202,9 @@ pub(super) fn refresh_channel_display(app: &mut App, num: u16) {
             if let Some(next) = find_programmed_channel(app, num, true) {
                 let ch = app.storage.read_channel(next);
                 app.sides[i].load_channel(next, &ch);
+            } else {
+                app.sides[i].restore_vfo_from_backup();
+                app.no_channels_ticks = NO_CHANNELS_HOLD_TICKS;
             }
         } else {
             let ch = app.storage.read_channel(num);
