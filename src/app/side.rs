@@ -94,6 +94,21 @@ impl Side {
         vfo.to_bytes()
     }
 
+    pub fn restore_vfo_from_backup(&mut self) {
+        let backup = self.vfo_backup;
+        self.vfo_chan = ChVfoMode::Vfo;
+        self.name = [0; 12];
+        self.rx_freq_hz = backup.rx_freq_hz;
+        self.freq_dir = backup.freq_dir;
+        self.offset_hz = backup.offset_hz;
+        self.cfg.wide_band = backup.wide_band;
+        self.cfg.power = backup.power;
+        self.cfg.subaudio_tx = backup.subaudio_tx;
+        self.cfg.subaudio_rx = backup.subaudio_rx;
+        self.ani_target = backup.ani_target;
+        self.refresh_cfg_freqs();
+    }
+
     pub fn load_channel(&mut self, num: u16, ch: &flash_map::Channel) {
         self.vfo_chan = ChVfoMode::Channel;
         self.channel_num = num;

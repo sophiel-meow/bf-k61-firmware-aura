@@ -837,10 +837,8 @@ impl App {
         self.ani_caller
     }
 
-    pub fn poll_no_channels_notice(&mut self) {
-        if self.no_channels_ticks > 0 {
-            self.no_channels_ticks -= 1;
-        }
+    pub fn poll_no_channels_notice(&mut self, ticks: u16) {
+        self.no_channels_ticks = self.no_channels_ticks.saturating_sub(ticks);
     }
 
     pub fn no_channels_notice(&self) -> bool {
@@ -1098,8 +1096,8 @@ impl App {
         tx::poll_cw_hang(self, syst);
     }
 
-    pub fn poll_tot(&mut self, syst: &mut SYST) {
-        tx::poll_tot(self, syst);
+    pub fn poll_tot(&mut self, syst: &mut SYST, ticks: u16) {
+        tx::poll_tot(self, syst, ticks);
     }
 
     // getters

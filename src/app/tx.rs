@@ -175,11 +175,11 @@ pub(super) fn poll_cw_hang(app: &mut App, syst: &mut SYST) {
     }
 }
 
-pub(super) fn poll_tot(app: &mut App, syst: &mut SYST) {
+pub(super) fn poll_tot(app: &mut App, syst: &mut SYST, ticks: u16) {
     if !app.is_transmitting() || app.settings.tot_level == 0 {
         return;
     }
-    app.tot_ticks += 1;
+    app.tot_ticks = app.tot_ticks.saturating_add(ticks);
     let limit = app.settings.tot_seconds() * TICKS_PER_SECOND;
     if app.tot_ticks >= limit {
         if app.cw_tx_active {
