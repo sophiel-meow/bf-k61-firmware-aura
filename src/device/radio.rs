@@ -967,7 +967,8 @@ impl Radio {
         self.fd6818.apply_tx_mic_gain(syst);
         self.fd6818.tx_on(syst);
         self.fd6818.pa_enable(syst, self.cfg.power);
-        match self.band() {
+
+        match Self::band_of(self.cfg.tx_freq_hz) {
             Band::Uhf => self.fd6818.set_tx_band_uhf(syst),
             Band::Vhf => self.fd6818.set_tx_band_vhf(syst),
         }
@@ -995,7 +996,8 @@ impl Radio {
         self.fd6818.set_scramble(syst, self.scramble_level);
         self.fd6818.tx_on(syst);
         self.fd6818.pa_enable(syst, self.cfg.power);
-        match self.band() {
+
+        match Self::band_of(self.cfg.tx_freq_hz) {
             Band::Uhf => self.fd6818.set_tx_band_uhf(syst),
             Band::Vhf => self.fd6818.set_tx_band_vhf(syst),
         }
