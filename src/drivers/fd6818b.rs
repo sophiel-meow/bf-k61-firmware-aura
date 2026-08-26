@@ -285,6 +285,16 @@ const AF_OUT_BEEP_VOLUME: u16 = 0xB800 | (10 << 4) | 2;
 /// REG_VOLUME is fixed to this value in AM mode instead of the calibrated
 /// wideband/narrowband level.
 const AM_VOLUME_FIXED: u16 = 0xB3AA;
+/// Extra REG 0x47 bit `set_af_out()` ORs in for RX audio while demodulating
+/// AM, selecting the chip's AM-envelope/product-detector output instead of
+/// the plain FM discriminator. Same value as BK4819's `fd6818.rs` -- ported
+/// from there together with the rest of this file's AM/USB fixes (see
+/// `apply_modulation`'s doc comment); bf5rh-fw found this confirmed against
+/// its own disassembly of the UV-5RH stock firmware's `Rfic_SetAfout()`.
+const AM_AF_OUT_BIT: u16 = 0x0600;
+/// Extra REG 0x47 bit for RX audio while demodulating `Modulation::Usb`/`Cw`.
+/// See `AM_AF_OUT_BIT`'s doc comment.
+const USB_AF_OUT_BIT: u16 = 0x0400;
 
 /// IF frequency selection register.
 ///
@@ -299,15 +309,15 @@ const AM_VOLUME_FIXED: u16 = 0xB3AA;
 ///   0x0000 = Zero IF (used for USB / CW direct-conversion)
 const REG_IF_SEL: u8 = 0x3D;
 
-#[allow(dead_code)]
 const IF_SEL_8K46: u16 = 0x2AAB;
-#[allow(dead_code)]
 const IF_SEL_ZERO: u16 = 0x0000;
 
-/// REG 0x73 bit4: AFC (automatic frequency control) disable.
-/// FIXME: `init()` writes this once as part of BK4829's fixed init word (`0x4691`);
+/// REG 0x73 bit4: AFC (automatic frequency control) disable. `init()` writes
+/// this once as part of BK4829's fixed init word (`0x4691`); `apply_modulation`
+/// additionally RMWs just this bit at runtime (set outside FM/CW-over-FM,
+/// cleared for them) -- AFC tracking FM deviation would otherwise fight
+/// AM/SSB/CW reception, which has none.
 const REG_AFC_DISABLE: u8 = 0x73;
-#[allow(dead_code)]
 const AFC_DISABLE_BIT: u16 = 0x0010;
 
 /// REG 0x71: single-tone oscillator frequency (shared by the UI key-beep,
@@ -888,7 +898,11 @@ impl<'a> Fd6818<'a> {
     /// Selects what REG 0x47 routes to the audio-out pin and switches
     /// REG_VOLUME (0x48) alongside it. `wide` selects which calibrated
     /// volume level applies when the state isn't a fixed-volume tone.
-    /// FIXME: validate the modulation
+    /// In `Modulation::Am`/`Usb`/`Cw`, RX audio gets an extra REG 0x47 bit
+    /// (`AM_AF_OUT_BIT`/`USB_AF_OUT_BIT`) matching BK4819's `fd6818.rs` --
+    /// ported over once bf5rh-fw's own hardware testing confirmed this
+    /// BK4829 path needed the same fix (this driver previously left it out,
+    /// unvalidated -- see `apply_modulation`'s doc comment).
     pub fn set_af_out(
         &mut self,
         syst: &mut SYST,
@@ -905,7 +919,14 @@ impl<'a> Fd6818<'a> {
             AfOutState::FskTest => AF_STATE_FSK_TEST,
         };
 
-        let af_out = AF_OUT_BASE | state_bits;
+        let mut af_out = AF_OUT_BASE | state_bits;
+        if state == AfOutState::RxAudio {
+            match modulation {
+                Modulation::Am => af_out |= AM_AF_OUT_BIT,
+                Modulation::Usb | Modulation::Cw => af_out |= USB_AF_OUT_BIT,
+                Modulation::Fm | Modulation::Cwf => {}
+            }
+        }
         self.write_reg(syst, REG_AF_OUT, af_out);
 
         let vol_reg = if state == AfOutState::Beep {
@@ -923,8 +944,29 @@ impl<'a> Fd6818<'a> {
         self.write_reg(syst, REG_VOLUME, vol_reg);
     }
 
-    // FIXME: validate the modulation in BK4819
+    /// Ported from `fd6818.rs` (BK4819) -- confirmed working on bf5rh-fw's
+    /// FD6818B/BK4829 hardware (a confirmed pin/register-compatible rebadge
+    /// of FD6818/BK4819), resolving the same "AM/USB reception poor" symptom
+    /// this driver previously shared: `set_af_out` never switched off the
+    /// FM-discriminator audio path, `REG_IF_SEL` was never zeroed for
+    /// USB/CW's product detection, and AFC was left tracking FM deviation
+    /// that AM/SSB/CW signals don't have.
     pub fn apply_modulation(&mut self, syst: &mut SYST, modulation: Modulation) {
+        let if_sel = if matches!(modulation, Modulation::Usb | Modulation::Cw) {
+            IF_SEL_ZERO
+        } else {
+            IF_SEL_8K46
+        };
+        self.write_reg(syst, REG_IF_SEL, if_sel);
+
+        let afc_disable = self.read_reg(syst, REG_AFC_DISABLE);
+        let afc_disable = if !matches!(modulation, Modulation::Fm | Modulation::Cwf) {
+            afc_disable | AFC_DISABLE_BIT
+        } else {
+            afc_disable & !AFC_DISABLE_BIT
+        };
+        self.write_reg(syst, REG_AFC_DISABLE, afc_disable);
+
         let (agc5, agc6) = if modulation == Modulation::Am {
             (RXAGC_5_AM, RXAGC_6_AM)
         } else {
