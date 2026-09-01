@@ -270,6 +270,25 @@ const REG_AF_RX_3K: u8 = 0x75;
 const REG_AF_RX_300_D1: u8 = 0x54;
 const REG_AF_RX_300_D2: u8 = 0x55;
 
+/// REG 0x2B: AF filter enables. RX path lives in the high bits, TX path in
+/// the low bits; every bit is "1 = disable that filter":
+///
+/// | bit | filter                  |
+/// |-----|-------------------------|
+/// | 10  | AF Rx 300 Hz high-pass  |
+/// |  9  | AF Rx 3 kHz low-pass    |
+/// |  8  | AF Rx de-emphasis       |
+/// |  2  | AF Tx 300 Hz high-pass  |
+/// |  1  | AF Tx LPF1              |
+/// |  0  | AF Tx pre-emphasis      |
+const REG_AF_FILTER: u8 = 0x2B;
+
+/// 0x0000 = stock (all filters + de-emphasis on)
+/// 0x0300 = disable Rx de-emphasis + Rx 3kHz LPF
+/// 0x0500 = disable Rx de-emphasis + Rx 300Hz HPF
+/// 0x0400 = disable Rx 300Hz HPF only
+const AF_FILTER_RX_VALUE: u16 = 0x0300;
+
 const REG_AF_OUT: u8 = 0x47;
 /// Same base value as BK4819
 const AF_OUT_BASE: u16 = 0x6040;
@@ -1452,6 +1471,7 @@ impl<'a> Fd6818<'a> {
         let prefix = self.state_on_prefix();
         self.write_reg(syst, REG_STATE, prefix);
         self.write_reg(syst, REG_STATE, STATE_RX_ON);
+        self.write_reg(syst, REG_AF_FILTER, AF_FILTER_RX_VALUE);
     }
 
     pub fn tx_on(&mut self, syst: &mut SYST) {
