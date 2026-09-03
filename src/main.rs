@@ -151,6 +151,21 @@ fn main() -> ! {
     let cal_buf = storage.read_calibration();
     writeln!(dbg, "norflash cal block @0xf210: {:02x?}", cal_buf).ok();
 
+    let mut sql_flag = [0u8; 1];
+    storage.read_raw(flash_map::addr::PA_TABLE_BASE_HIGH, &mut sql_flag);
+    if sql_flag[0] != 0xFF {
+        let sql_cal = storage.read_squelch_cal();
+        writeln!(
+            dbg,
+            "squelch cal @0xf0c0: th_in={:?} th_out={:?}",
+            sql_cal.th_in, sql_cal.th_out
+        )
+        .ok();
+        rfic.set_squelch_cal(sql_cal);
+    } else {
+        writeln!(dbg, "squelch cal block blank, using placeholder table").ok();
+    }
+
     rfic.set_xtal_adjust(cal_buf[6]);
     writeln!(dbg, "xtal_adjust = {}", cal_buf[6]).ok();
 
