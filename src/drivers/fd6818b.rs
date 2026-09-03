@@ -122,15 +122,39 @@ const SUBAUDIO_TAIL_WORD: u16 = 0x01CD | 0x2000;
 /// running a second tone alongside it.
 const SEND_TAIL_WORD: u16 = 0x0471;
 
-/// Squelch-level base RSSI thresholds, index = squelch level 0..9 (0 =
-/// always open).
-const SQL_TH_IN: [u8; 10] = [0, 89, 91, 93, 95, 97, 99, 102, 105, 107];
-/// lower than SQL_TH_IN for closing to prevent chattering
-const SQL_TH_OUT: [u8; 10] = [0, 87, 89, 91, 93, 95, 97, 99, 102, 105];
+#[derive(Clone, Copy)]
+pub struct SquelchCal {
+    /// RSSI threshold to open, indexed by squelch level 0..9 (0 = always
+    /// open). REG 0x78 units, 0.5dB/step.
+    pub th_in: [u8; 10],
+    /// Threshold to close, a couple of counts below `th_in` so the squelch
+    /// does not chatter around the opening point.
+    pub th_out: [u8; 10],
+    pub off_u400: [u8; 16],
+    pub off_u350: [u8; 16],
+    pub off_v136: [u8; 16],
+    pub off_v200: [u8; 16],
+}
 
-const SQL_OFFSET_U_400: [u8; 16] = [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 0, 0, 0];
-const SQL_OFFSET_V_136: [u8; 10] = [4, 4, 4, 4, 4, 4, 4, 4, 2, 2];
-const SQL_OFFSET_V_200: [u8; 16] = [0; 16];
+/// Which per-band correction table `Rfic_SQLSetup` selects for a frequency.
+#[derive(Clone, Copy)]
+enum SqlBand {
+    U400,
+    U350,
+    V136,
+    V200,
+}
+
+impl SquelchCal {
+    pub const DEFAULT: SquelchCal = SquelchCal {
+        th_in: [0, 89, 91, 93, 95, 97, 99, 102, 105, 107],
+        th_out: [0, 87, 89, 91, 93, 95, 97, 99, 102, 105],
+        off_u400: [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 0, 0, 0],
+        off_u350: [0; 16],
+        off_v136: [4, 4, 4, 4, 4, 4, 4, 4, 2, 2, 0, 0, 0, 0, 0, 0],
+        off_v200: [0; 16],
+    };
+}
 
 /// REG 0x33: chip-internal GPIO used to steer the PA driver between the
 /// VHF and UHF output paths. bits[15:8] = output-enable-bar (active low,
@@ -454,6 +478,7 @@ pub struct Fd6818<'a> {
     rx_match_bit: SubaudioMatchBit,
     tone_active: bool,
     current_wide: bool,
+    squelch_cal: SquelchCal,
 
     /// No used.
     /// Which band `pa_enable()` should use for BK4829's fixed gain word.
@@ -475,6 +500,7 @@ impl<'a> Fd6818<'a> {
             rx_match_bit: SubaudioMatchBit::Ctcss,
             tone_active: false,
             current_wide: true,
+            squelch_cal: SquelchCal::DEFAULT,
             band_uhf: true,
         }
     }
@@ -1185,27 +1211,50 @@ impl<'a> Fd6818<'a> {
         None
     }
 
+    pub fn set_squelch_cal(&mut self, cal: SquelchCal) {
+        self.squelch_cal = cal;
+    }
+
     pub fn set_squelch_level(&mut self, syst: &mut SYST, freq_hz: u32, level: u8) {
-        let level = (level as usize).min(SQL_TH_IN.len() - 1);
-        let offset = Self::squelch_offset(freq_hz);
-        let th_in = SQL_TH_IN[level].saturating_sub(offset);
-        let th_out = SQL_TH_OUT[level].saturating_sub(offset);
+        let cal = &self.squelch_cal;
+        let level = (level as usize).min(cal.th_in.len() - 1);
+        let (th_in, th_out) = match Self::squelch_band_offset(freq_hz) {
+            Some((table, idx)) => {
+                let offset = match table {
+                    SqlBand::U400 => cal.off_u400[idx],
+                    SqlBand::U350 => cal.off_u350[idx],
+                    SqlBand::V136 => cal.off_v136[idx],
+                    SqlBand::V200 => cal.off_v200[idx],
+                };
+                if cal.th_in[level] > offset {
+                    (
+                        cal.th_in[level] - offset,
+                        cal.th_out[level].saturating_sub(offset),
+                    )
+                } else {
+                    (cal.th_in[level], cal.th_out[level])
+                }
+            }
+            None => {
+                let th = cal.th_in[9].saturating_sub(cal.off_v136[0]);
+                (th, th.saturating_sub(3))
+            }
+        };
         self.write_reg(syst, REG_SQUELCH, ((th_in as u16) << 8) | th_out as u16);
     }
 
-    fn squelch_offset(freq_hz: u32) -> u8 {
+    fn squelch_band_offset(freq_hz: u32) -> Option<(SqlBand, usize)> {
         let mhz = freq_hz / 1_000_000;
         if freq_hz >= 400_000_000 {
-            let idx = (((mhz - 400) / 10) as usize).min(SQL_OFFSET_U_400.len() - 1);
-            SQL_OFFSET_U_400[idx]
+            Some((SqlBand::U400, (((mhz - 400) / 10) as usize).min(15)))
+        } else if freq_hz >= 350_000_000 {
+            Some((SqlBand::U350, (((mhz - 350) / 5) as usize).min(15)))
+        } else if (130_000_000..180_000_000).contains(&freq_hz) {
+            Some((SqlBand::V136, (((mhz - 130) / 5) as usize).min(9)))
         } else if freq_hz >= 200_000_000 {
-            let idx = (((mhz - 200) / 5) as usize).min(SQL_OFFSET_V_200.len() - 1);
-            SQL_OFFSET_V_200[idx]
-        } else if freq_hz >= 130_000_000 {
-            let idx = (((mhz - 130) / 5) as usize).min(SQL_OFFSET_V_136.len() - 1);
-            SQL_OFFSET_V_136[idx]
+            Some((SqlBand::V200, (((mhz - 200) / 5) as usize).min(15)))
         } else {
-            0
+            None
         }
     }
 
