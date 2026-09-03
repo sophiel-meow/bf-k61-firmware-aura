@@ -45,6 +45,13 @@ pub mod addr {
     pub const PA_TABLE_BASE_HIGH: u32 = 0xF000;
     pub const PA_TABLE_BASE_MID: u32 = 0xF040;
     pub const PA_TABLE_BASE_LOW: u32 = 0xF080;
+
+    pub const TH_SQL_TAB_ADDR: u32 = 0xF0C0;
+    pub const TH_SQL_TAB_MUTE_ADDR: u32 = 0xF0D0;
+    pub const OFFSET_SQL_U_400_ADDR: u32 = 0xF0E0;
+    pub const OFFSET_SQL_V_136_ADDR: u32 = 0xF0F0;
+    pub const OFFSET_SQL_V_200_ADDR: u32 = 0xF100;
+    pub const OFFSET_SQL_U_350_ADDR: u32 = 0xF110;
     pub const DEV_BATT_ADDR: u32 = 0xF200;
     // pub const RF_MODULATION_ADDR: u32 = 0xF210;
     // pub const DEV_LANGUAGE_ADDR: u32 = 0xF220;
