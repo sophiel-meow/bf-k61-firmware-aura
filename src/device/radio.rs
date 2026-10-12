@@ -994,6 +994,7 @@ impl Radio {
         self.fd6818.set_frequency_hz(syst, self.cfg.tx_freq_hz);
         self.fd6818.set_wide_bandwidth(syst, self.cfg.wide_band);
         self.fd6818.set_scramble(syst, self.scramble_level);
+        self.fd6818.set_subaudio_tx(syst, self.cfg.subaudio_tx);
         self.fd6818.tx_on(syst);
         self.fd6818.pa_enable(syst, self.cfg.power);
 
