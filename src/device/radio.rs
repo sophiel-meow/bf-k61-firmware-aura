@@ -531,8 +531,13 @@ impl Radio {
 
     pub fn poll_dtmf(&mut self, syst: &mut SYST) -> Option<[u8; 3]> {
         if !self.audio_open {
-            self.dtmf_rx_len = 0;
+            // The sender usually unkeys right after the last digit, so the
+            // squelch tail beats the inter-digit timeout: judge what we have
+            // now instead of throwing the frame away.
             self.dtmf_rx_timeout = 0;
+            if self.dtmf_rx_len > 0 {
+                return self.finish_dtmf_frame();
+            }
             return None;
         }
 
