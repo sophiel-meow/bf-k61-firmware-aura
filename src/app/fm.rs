@@ -303,6 +303,12 @@ pub(super) fn dispatch(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
     // re-mutes FM audio after literally every keypress (stepping, digit
     // entry, ...). Reassert it here whenever we're genuinely tuned in
     // (not mid-seek, where `start_seek` deliberately muted it).
+    resume_audio(app);
+}
+
+/// Re-enable the speaker after a UI beep while genuinely tuned in (not
+/// mid-seek, where `start_seek` deliberately muted it).
+pub(super) fn resume_audio(app: &mut App) {
     if app.mode == Mode::Fm && matches!(app.fm.phase, FmPhase::Tuning) {
         app.radio.set_speaker(true);
     }

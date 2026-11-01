@@ -18,11 +18,26 @@ use cortex_m::peripheral::SYST;
 
 // top-level dispatch
 pub(super) fn dispatch(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
-    if app.key_lock
-        && !matches!(ev.key, KeyId::Side1 | KeyId::Side2)
-        && !matches!((ev.key, ev.kind), (KeyId::Asterisk, KeyEventKind::Long))
-    {
-        return;
+    // Unlocking is handled here, ahead of any per-mode dispatcher, so a
+    // long `*` releases the lock in every mode (e.g. after a side key opened
+    // FM radio while locked). Locking itself stays mode-specific (Standby),
+    // since other modes give long `*` their own meaning (satellite delete).
+    if app.key_lock {
+        if matches!((ev.key, ev.kind), (KeyId::Asterisk, KeyEventKind::Long)) {
+            app.key_lock = false;
+            app.reset_key_idle();
+            app.note_power_save_activity(syst);
+            app.note_backlight_activity();
+            app.radio.play_beep(syst);
+            if app.mode == Mode::Fm {
+                // `play_beep` re-mutes the speaker; let FM reassert it.
+                fm::resume_audio(app);
+            }
+            return;
+        }
+        if !matches!(ev.key, KeyId::Side1 | KeyId::Side2) {
+            return;
+        }
     }
 
     app.reset_key_idle();
@@ -143,7 +158,8 @@ fn dispatch_standby(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
             _ => {}
         },
         KeyEventKind::Long => match ev.key {
-            KeyId::Asterisk => app.key_lock = !app.key_lock,
+            // Only reachable while unlocked; unlocking is done in `dispatch`.
+            KeyId::Asterisk => app.key_lock = true,
             KeyId::Pound => scan::enter(app, syst),
             KeyId::Side1 | KeyId::Side2 | KeyId::Band => {
                 let func = keyfn::from_u8(long_function(app, ev.key));
