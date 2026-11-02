@@ -419,7 +419,7 @@ fn main() -> ! {
             app.poll_tot(&mut cp.SYST, due.ticks_10ms);
         }
         app.poll_cw_hang(&mut cp.SYST);
-        app.poll_backlight();
+        app.poll_backlight(due.ticks_10ms);
         app.poll_chanmgr_name_timeout();
         app.poll_aprs_call_timeout();
         app.poll_aprs_dev_name_timeout();
@@ -444,9 +444,7 @@ fn main() -> ! {
         let audio_open = app.radio_mut().audio_is_open();
         app.poll_vox(&mut cp.SYST, mic_level, audio_open);
 
-        if due.every_100ms {
-            app.poll_auto_lock(&mut cp.SYST, audio_open);
-        }
+        app.poll_auto_lock(&mut cp.SYST, audio_open, due.ticks_10ms);
 
         // LCD contrast
         if due.every_50ms && applied_contrast != app.contrast() {

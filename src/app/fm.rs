@@ -96,7 +96,7 @@ pub(super) fn enter(app: &mut App, syst: &mut SYST) {
     app.radio.set_speaker(true);
 }
 
-fn exit(app: &mut App, syst: &mut SYST) {
+pub(super) fn exit(app: &mut App, syst: &mut SYST) {
     app.fm_radio.power_off(syst);
     app.mode = Mode::Standby;
     app.reset_key_idle();

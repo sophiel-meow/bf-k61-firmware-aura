@@ -385,7 +385,7 @@ impl App {
             dual_standby: settings.dual_standby,
             dual_hold_ticks: DUAL_STANDBY_HOLD_TICKS,
             tot_ticks: 0,
-            key_idle_ticks: 0,
+            key_idle_ticks: settings.key_auto_lock as u16 * 500,
             vox_det_dly: 0,
             vox_work_dly: 0,
             vox_active: false,
@@ -544,12 +544,12 @@ impl App {
         self.bl_idle_ticks = self.settings.backlight_time as u16 * BACKLIGHT_STEP_TICKS;
     }
 
-    pub fn poll_backlight(&mut self) {
+    pub fn poll_backlight(&mut self, elapsed_10ms: u16) {
         if self.radio.audio_is_open() {
             self.note_backlight_activity();
         }
-        if self.bl_idle_ticks > 0 && self.mode != Mode::SatelliteTracking {
-            self.bl_idle_ticks -= 1;
+        if self.mode != Mode::SatelliteTracking {
+            self.bl_idle_ticks = self.bl_idle_ticks.saturating_sub(elapsed_10ms);
         }
     }
 
@@ -649,10 +649,10 @@ impl App {
 
     // auto-lock
     fn reset_key_idle(&mut self) {
-        self.key_idle_ticks = self.settings.key_auto_lock as u16 * 50;
+        self.key_idle_ticks = self.settings.key_auto_lock as u16 * 500;
     }
 
-    pub fn poll_auto_lock(&mut self, syst: &mut SYST, rx_active: bool) {
+    pub fn poll_auto_lock(&mut self, syst: &mut SYST, rx_active: bool, elapsed_10ms: u16) {
         if self.settings.key_auto_lock == 0
             || self.key_lock
             || self.mode != Mode::Standby
@@ -662,7 +662,7 @@ impl App {
             return;
         }
         if self.key_idle_ticks > 0 {
-            self.key_idle_ticks -= 1;
+            self.key_idle_ticks = self.key_idle_ticks.saturating_sub(elapsed_10ms);
             if self.key_idle_ticks == 0 {
                 self.key_lock = true;
                 self.radio.play_beep(syst);

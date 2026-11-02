@@ -81,6 +81,12 @@ where
     Text::new(header.as_str(), Point::new(4, 12), small)
         .draw(lcd)
         .ok();
+    super::icons::draw_battery(lcd, 126, 0, app.battery_bars() + 2);
+    if app.is_key_locked() {
+        embedded_graphics::image::Image::new(&super::icons::key_lock(), Point::new(99, 0))
+            .draw(lcd)
+            .ok();
+    }
 
     if app.fm_input_len() > 0 {
         draw_freq_input(lcd, app, 40);
