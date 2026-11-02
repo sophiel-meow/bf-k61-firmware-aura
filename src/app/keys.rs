@@ -63,6 +63,19 @@ pub(super) fn dispatch(app: &mut App, syst: &mut SYST, ev: KeyEvent) {
         app.radio.play_beep(syst);
     }
 
+    // A programmable key assigned to FM radio also closes FM on the next press.
+    if app.mode == Mode::Fm && matches!(ev.key, KeyId::Side1 | KeyId::Side2 | KeyId::Band) {
+        let assigned = match ev.kind {
+            KeyEventKind::Single => short_function(app, ev.key),
+            KeyEventKind::Long => long_function(app, ev.key),
+            _ => 0,
+        };
+        if keyfn::from_u8(assigned) == keyfn::KeyFunction::FmRadio {
+            fm::exit(app, syst);
+            return;
+        }
+    }
+
     match app.mode {
         Mode::Standby => dispatch_standby(app, syst, ev),
         Mode::AppMenu => dispatch_app_menu(app, syst, ev),
